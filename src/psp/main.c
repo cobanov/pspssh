@@ -54,6 +54,7 @@ typedef struct {
     char port[8];
     char user[64];
     char password[128];
+    int profile;            /* which saved Wi-Fi connection to use, 1-based */
 } settings;
 
 /* ------------------------------------------------------------- lifecycle -- */
@@ -118,6 +119,7 @@ static int load_settings(settings *out)
 
     memset(out, 0, sizeof(*out));
     strcpy(out->port, "22");
+    out->profile = 1;
 
     fd = sceIoOpen(CONFIG_PATH, PSP_O_RDONLY, 0777);
     if (fd < 0) {
@@ -166,6 +168,11 @@ static int load_settings(settings *out)
             strncpy(out->user, value, sizeof(out->user) - 1);
         } else if (strcmp(key, "password") == 0) {
             strncpy(out->password, value, sizeof(out->password) - 1);
+        } else if (strcmp(key, "profile") == 0) {
+            out->profile = atoi(value);
+            if (out->profile < 1) {
+                out->profile = 1;
+            }
         }
     }
     return out->host[0] != '\0' && out->user[0] != '\0';
@@ -199,15 +206,40 @@ static int start_network(int profile)
     }
 
     /* State 4 is "associated and holding an address". Anything less and a
-     * socket would fail in a way that looks like the server's fault. */
-    while (state != 4 && tries++ < 200 && !exit_requested) {
+     * socket would fail in a way that looks like the server's fault.
+     *
+     * The states are shown as they change rather than only at the end. Where it
+     * stalls is the diagnosis: stuck at 0 means the connection never started at
+     * all, which on this device almost always means there is no saved profile
+     * with that number — the network existing on the router is not enough, the
+     * PSP needs its own connection under Settings > Network Settings.
+     *
+     * Thirty seconds, not ten. A cold radio scanning 2.4 GHz and then waiting on
+     * DHCP is routinely slower than a first guess suggests, and giving up early
+     * reports a working network as a broken one. */
+    printf("  joining profile %d", profile);
+    while (state != 4 && tries++ < 600 && !exit_requested) {
+        int previous = state;
+
         if (sceNetApctlGetState(&state) < 0) {
             break;
         }
+        if (state != previous) {
+            printf(" %d", state);
+        }
         sceKernelDelayThread(50 * 1000);
     }
+    printf("\n");
+
     if (state != 4) {
-        printf("  gave up waiting for Wi-Fi (state %d)\n", state);
+        printf("  gave up waiting for wi-fi at state %d\n", state);
+        if (state == 0) {
+            printf("\n  state 0 means it never started. check that:\n");
+            printf("   - the psp has a saved connection for this network,\n");
+            printf("     under Settings > Network Settings > Infrastructure\n");
+            printf("   - it is connection number %d in that list\n", profile);
+            printf("     (put profile=N in pspssh.cfg to pick another)\n");
+        }
         return 0;
     }
 
@@ -344,13 +376,14 @@ int main(void)
         printf("    port=22\n");
         printf("    user=me\n");
         printf("    password=secret\n");
+        printf("    profile=1\n");
         wait_for_button();
         sceKernelExitGame();
         return 0;
     }
     printf("  %s@%s:%s\n\n", config.user, config.host, config.port);
 
-    if (!start_network(1)) {
+    if (!start_network(config.profile)) {
         wait_for_button();
         sceKernelExitGame();
         return 0;
