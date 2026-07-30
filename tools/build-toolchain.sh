@@ -72,6 +72,8 @@ RUN ./autogen.sh \\
         --enable-wolfssh \\
         --enable-curve25519 \\
         --enable-ed25519 \\
+        --enable-ed25519-stream \\
+        --enable-keygen \\
         --enable-aesctr \\
         --enable-chacha \\
         --enable-poly1305 \\
@@ -85,8 +87,15 @@ RUN ./autogen.sh \\
     && make install
 
 # Fail loudly here rather than at a handshake on the device.
+#
+# Only macros that configure actually writes into options.h belong in this list.
+# HAVE_ED25519_KEY_IMPORT and _EXPORT do not: settings.h derives them from
+# HAVE_ED25519, so grepping options.h for them fails on a perfectly good build.
+# Those are covered by the compile check below, which is the authoritative one
+# because it evaluates every header together the way the real build does.
 RUN set -e; \\
-    for s in HAVE_CURVE25519 HAVE_ED25519 WOLFSSL_AES_COUNTER HAVE_CHACHA HAVE_POLY1305; do \\
+    for s in HAVE_CURVE25519 HAVE_ED25519 WOLFSSL_ED25519_STREAMING_VERIFY \\
+             WOLFSSL_AES_COUNTER HAVE_CHACHA HAVE_POLY1305; do \\
         grep -qE "^#define \$s\b" \${PSPDEV}/psp/include/wolfssl/options.h \\
             || { echo "wolfSSL built without \$s — SSH would fail to negotiate"; exit 1; }; \\
         echo "  wolfSSL: \$s"; \\
@@ -100,13 +109,26 @@ RUN curl -fsSL -o wolfssh.tar.gz \\
 
 WORKDIR /build/wolfssh-${WOLFSSH_VERSION}-stable
 
-# --disable-term, plus NO_TERMIOS on top of it. WOLFSSH_TERM is on by default
-# and port.h then includes <termios.h>; the PSP toolchain ships a termios.h
-# whose first line includes a <sys/termios.h> it does not have, so anything
-# reaching for it fails to compile. The guard is
-# `!defined(NO_TERMIOS) && defined(WOLFSSH_TERM)`, so both halves are addressed
-# rather than relying on one. It costs nothing — that code puts a *local* POSIX
-# terminal into raw mode, which is meaningless on a device with no tty.
+# WOLFSSH_TERM stays ON, and NO_TERMIOS is what makes that possible.
+#
+# The PSP toolchain ships a termios.h whose first line includes a
+# <sys/termios.h> that does not exist, so anything reaching for it fails to
+# compile. The obvious response is --disable-term, and it is wrong: reading the
+# guards shows WOLFSSH_SESSION_TERMINAL lives inside `#ifdef WOLFSSH_TERM` in
+# ssh.c, so disabling it removes the ability to request a pty at all — which for
+# a terminal client is the entire point.
+#
+# The right combination comes from the guard itself:
+#
+#     #if !defined(NO_TERMIOS) && defined(WOLFSSH_TERM)
+#         #include <termios.h>
+#
+# Keeping WOLFSSH_TERM and defining NO_TERMIOS satisfies both halves: pty-req,
+# the SESSION_TERMINAL channel type and wolfSSH_ChangeTerminalSize are all
+# compiled, while the <termios.h> include and every use of WOLFSSH_TERMIOS —
+# which are guarded on !NO_TERMIOS too — are not. What is dropped is local tty
+# handling, which is meaningless on a device that has no tty. Terminal size
+# falls back to a built-in 80x24 and we override it explicitly.
 #
 # WOLFSSH_USER_IO is a design decision rather than a workaround. wolfSSH's
 # default I/O reaches for <sys/socket.h>, which the PSP does not have — its BSD
@@ -122,7 +144,6 @@ RUN ./autogen.sh \\
         --enable-static \\
         --disable-shared \\
         --disable-examples \\
-        --disable-term \\
         CC=psp-gcc AR=psp-ar RANLIB=psp-ranlib \\
         CFLAGS="-G0 -O2 -DNO_TERMIOS -DWOLFSSH_USER_IO" \\
         LDFLAGS="-L\${PSPDEV}/psp/lib" \\
@@ -130,14 +151,53 @@ RUN ./autogen.sh \\
     && make -j"\$(nproc)" \\
     && make install
 
-# The algorithm names live in the library as strings. If curve25519-sha256 is
-# not among them the negotiation cannot succeed, whatever else built cleanly.
+# Ask the compiler, not the strings.
+#
+# Grepping the archive for "ssh-ed25519" passed while ed25519 was in fact
+# disabled: wolfSSH turns it off unless wolfSSL provides HAVE_ED25519 *and*
+# WOLFSSL_ED25519_STREAMING_VERIFY *and* key import *and* key export, and the
+# name still appears in the binary for other reasons. The session then
+# negotiated ssh-rsa quite happily, which is the exact failure this project
+# exists to prevent — and it took comparing a fingerprint against the server's
+# own to notice.
+#
+# So the check is now the one that cannot be fooled: compile against the headers
+# and fail if wolfSSH says the algorithm is off.
+RUN printf '%s\\n' \\
+        '#include <wolfssh/ssh.h>' \\
+        '#include <wolfssh/internal.h>' \\
+        '#ifdef WOLFSSH_NO_ED25519' \\
+        '#error "ed25519 host keys are disabled — the client would fall back to RSA"' \\
+        '#endif' \\
+        '#ifdef WOLFSSH_NO_CURVE25519_SHA256' \\
+        '#error "curve25519 key exchange is disabled"' \\
+        '#endif' \\
+        '#ifdef WOLFSSH_NO_AES_CTR' \\
+        '#error "aes-ctr is disabled — nothing modern would be left to encrypt with"' \\
+        '#endif' \\
+        'int main(void) { return 0; }' \\
+        > /tmp/algo_check.c \\
+    && psp-gcc -G0 -DNO_TERMIOS -DWOLFSSH_USER_IO \\
+        -I\${PSPDEV}/psp/include \\
+        -I/build/wolfssh-${WOLFSSH_VERSION}-stable \\
+        -c /tmp/algo_check.c -o /tmp/algo_check.o \\
+    && echo "  wolfSSH: ed25519, curve25519 and aes-ctr are all compiled in"
+
 RUN set -e; \\
     for a in curve25519-sha256 ssh-ed25519 aes256-ctr hmac-sha2-256; do \\
         strings \${PSPDEV}/psp/lib/libwolfssh.a | grep -qF "\$a" \\
             || { echo "libwolfssh.a does not offer \$a"; exit 1; }; \\
         echo "  wolfSSH: \$a"; \\
-    done
+    done; \\
+    export PATH="\${PSPDEV}/bin:\$PATH"; \\
+    cd /tmp && psp-ar x \${PSPDEV}/psp/lib/libwolfssh.a; \\
+    for f in wolfSSH_connect wolfSSH_SetChannelType wolfSSH_ChangeTerminalSize \\
+             wolfSSH_stream_read wolfSSH_SetIORecv wolfSSH_CTX_SetPublicKeyCheck; do \\
+        psp-nm *.o 2>/dev/null | grep -q " T \$f\$" \\
+            || { echo "libwolfssh.a has no \$f — the terminal API was compiled out"; exit 1; }; \\
+        echo "  wolfSSH: \$f"; \\
+    done; \\
+    rm -f /tmp/*.o
 EOF
 
 echo "==> building wolfSSL ${WOLFSSL_VERSION} and wolfSSH ${WOLFSSH_VERSION} for PSP"

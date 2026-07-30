@@ -17,7 +17,7 @@ Target hardware is a **PSP Go (N1000)** on custom firmware. 480×272 gives an
 
 ## Status
 
-The toolchain is real and the SSH library is cross-compiled; nothing runs on a
+The session core works against a real server from a laptop; nothing runs on a
 PSP yet. [docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack and
 is worth reading before contributing.
 
@@ -25,8 +25,9 @@ is worth reading before contributing.
 - [x] Prior art and platform research
 - [x] wolfSSL and wolfSSH cross-compiled for PSP, with the modern algorithms
       asserted at build time — `tools/build-toolchain.sh`
+- [x] A full session against a real OpenSSH from the host — curve25519-sha256,
+      ssh-ed25519, aes256-ctr, a pty and a shell — `tools/test-host.sh`
 - [ ] Probe: measure input, screen and network on real hardware
-- [ ] Transport working against a real OpenSSH server, from the host
 - [ ] Terminal and input on the PSP
 - [ ] A session
 

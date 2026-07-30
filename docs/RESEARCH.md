@@ -251,3 +251,70 @@ with `colrm`, which busybox does not provide.
 wolfSSL: HAVE_CURVE25519, HAVE_ED25519, WOLFSSL_AES_COUNTER, HAVE_CHACHA, HAVE_POLY1305
 wolfSSH: curve25519-sha256, ssh-ed25519, aes256-ctr, hmac-sha2-256
 ```
+
+## 7. Answered: a real session, and the trap that nearly went unnoticed
+
+`tools/test-host.sh` now completes a full session against a live OpenSSH from
+the host: curve25519-sha256 key exchange, an ssh-ed25519 host key, aes256-ctr
+with hmac-sha2-256, password authentication, a pty, a command and its output,
+and a terminal resize.
+
+Getting there turned up one thing worth the whole exercise.
+
+### The client was quietly negotiating ssh-rsa
+
+The first green run said "ed25519 host key passes". It was not true, and the
+test had no way to know: it asserted that a session *opened*, which is not the
+same claim at all.
+
+What gave it away was comparing the fingerprint the client computed with the one
+the server reports for itself. They did not match. Dumping the blob showed 279
+bytes beginning `00 00 00 07 "ssh-rsa"` — wolfSSH's default algorithm lists are
+broad and take whatever the server prefers, and the test container deliberately
+still offers the old algorithms. The client was working exactly as badly as the
+2008 one it exists to replace.
+
+Two fixes, and the second is the durable one:
+
+**Pin the algorithms, do not check afterwards.** With a single name in each
+list a weak session cannot be negotiated at all; if a server has nothing modern
+to offer, the connection fails loudly instead of succeeding quietly.
+
+**Assert with the compiler, not with `strings`.** The build was already
+grepping `libwolfssh.a` for `ssh-ed25519` and finding it — while ed25519 was
+disabled. The name appears in the binary for other reasons. The check that
+cannot be fooled compiles against the headers and fails on
+`#ifdef WOLFSSH_NO_ED25519`.
+
+### wolfSSH's ed25519 needs four things from wolfSSL, not one
+
+`--enable-ed25519` is not sufficient. wolfSSH disables ed25519 unless wolfSSL
+provides **all** of:
+
+```
+HAVE_ED25519  WOLFSSL_ED25519_STREAMING_VERIFY
+HAVE_ED25519_KEY_IMPORT  HAVE_ED25519_KEY_EXPORT
+```
+
+The missing one is `WOLFSSL_ED25519_STREAMING_VERIFY`, which needs
+`--enable-ed25519-stream`. Without it everything builds, links and runs — and
+silently falls back to RSA.
+
+The last two are *not* in `options.h`; `settings.h` derives them from
+`HAVE_ED25519`. An assertion that greps `options.h` for them fails on a
+perfectly good build, which is why the list there covers only what configure
+actually writes and the compile check covers the rest.
+
+### Two smaller ones
+
+**There are two host key lists.** `AlgoListKeyAccepted` is what the client
+*advertises* in KEXINIT; `AlgoListKey` is what it will *accept* when the server
+picks. Pin only the second and the server still chooses from the broad
+advertised list, lands on ssh-rsa, and the connection dies with "cannot match
+key algo with peer" — which reads like the server's fault and is not.
+
+**`WS_WINDOW_FULL` is an ordinary path, not an error.** A channel's send window
+is often zero until the peer's first `WINDOW_ADJUST` arrives, so a client's very
+first keystroke hits it. Retrying the write alone spins forever, because the
+window only opens when incoming packets are processed. `pspssh_write` pumps once
+and reports "try again", so callers do not each have to know this.
