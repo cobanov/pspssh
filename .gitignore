@@ -9,3 +9,6 @@ PARAM.SFO
 
 # Fetched, not committed: third-party sources with their own licences.
 third_party/
+
+# macOS leaves these everywhere.
+.DS_Store
