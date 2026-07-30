@@ -26,6 +26,7 @@
 #include <pspnet_apctl.h>
 #include <pspnet_resolver.h>
 #include <psputility.h>
+#include <psputility_netparam.h>
 #include <pspsdk.h>
 
 #include <sys/socket.h>
@@ -180,13 +181,53 @@ static int load_settings(settings *out)
 
 /* ------------------------------------------------------------------- net -- */
 
+/* Which saved connections exist, and what they are called.
+ *
+ * Guessing a profile number was a mistake worth undoing rather than papering
+ * over. Deleting a connection in the PSP's settings does not necessarily
+ * renumber the ones after it, so "the only remaining connection" is not
+ * reliably number 1 — which is exactly how a profile that works perfectly in
+ * the browser fails here. The device knows the answer, so it gets asked. */
+static int list_profiles(int *found, int max)
+{
+    netData data;
+    int count = 0;
+    int id;
+
+    printf("  saved connections:\n");
+    for (id = 1; id <= 10 && count < max; id++) {
+        if (sceUtilityCheckNetParam(id) != 0) {
+            continue;
+        }
+        found[count++] = id;
+
+        memset(&data, 0, sizeof(data));
+        printf("   %d:", id);
+        if (sceUtilityGetNetParam(id, PSP_NETPARAM_NAME, &data) == 0) {
+            printf(" %s", data.asString);
+        }
+        memset(&data, 0, sizeof(data));
+        if (sceUtilityGetNetParam(id, PSP_NETPARAM_SSID, &data) == 0) {
+            printf("  (ssid %s)", data.asString);
+        }
+        printf("\n");
+    }
+    if (count == 0) {
+        printf("   none. create one under Settings > Network Settings.\n");
+    }
+    return count;
+}
+
 /* The sequence is fixed and not guessable; it comes from the PSPSDK samples.
  * The profile is one the user configured in the PSP's own network settings —
  * this picks a profile, it does not join a network. */
-static int start_network(int profile)
+static int try_profile(int profile);
+
+static int start_network(int preferred)
 {
-    int state = 0;
-    int tries = 0;
+    int available[10];
+    int count;
+    int i;
     int err;
 
     sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON);
@@ -198,10 +239,36 @@ static int start_network(int profile)
         return 0;
     }
 
+    count = list_profiles(available, 10);
+    if (count == 0) {
+        return 0;
+    }
+    printf("\n");
+
+    /* The configured one first, then everything else. A wrong number in the
+     * config should cost a few seconds, not an evening. */
+    if (try_profile(preferred)) {
+        return 1;
+    }
+    for (i = 0; i < count && !exit_requested; i++) {
+        if (available[i] != preferred && try_profile(available[i])) {
+            printf("  (put profile=%d in pspssh.cfg to go straight there)\n",
+                   available[i]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int try_profile(int profile)
+{
+    int state = 0;
+    int tries = 0;
+    int err;
+
     err = sceNetApctlConnect(profile);
     if (err != 0) {
-        printf("  profile %d would not connect (0x%08x)\n", profile, err);
-        printf("  check Settings > Network Settings for a saved profile\n");
+        printf("  profile %d refused to start (0x%08x)\n", profile, err);
         return 0;
     }
 
@@ -232,14 +299,11 @@ static int start_network(int profile)
     printf("\n");
 
     if (state != 4) {
-        printf("  gave up waiting for wi-fi at state %d\n", state);
-        if (state == 0) {
-            printf("\n  state 0 means it never started. check that:\n");
-            printf("   - the psp has a saved connection for this network,\n");
-            printf("     under Settings > Network Settings > Infrastructure\n");
-            printf("   - it is connection number %d in that list\n", profile);
-            printf("     (put profile=N in pspssh.cfg to pick another)\n");
-        }
+        printf("  profile %d stalled at state %d\n", profile, state);
+        /* Left disconnected on the way out, or the next attempt inherits a
+         * half-open association and fails for a reason that is not its own. */
+        sceNetApctlDisconnect();
+        sceKernelDelayThread(500 * 1000);
         return 0;
     }
 
