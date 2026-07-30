@@ -1,0 +1,11 @@
+# Build output.
+build/
+out/
+*.o
+*.elf
+*.prx
+EBOOT.PBP
+PARAM.SFO
+
+# Fetched, not committed: third-party sources with their own licences.
+third_party/
