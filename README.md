@@ -17,8 +17,7 @@ Target hardware is a **PSP Go (N1000)** on custom firmware. 480×272 gives an
 
 ## Status
 
-The session core works against a real server from a laptop; nothing runs on a
-PSP yet. [docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack and
+There is an installable build. It has not yet been run on hardware. [docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack and
 is worth reading before contributing.
 
 - [x] Toolchain verified: `pspdev/pspdev` builds, networking libraries present
@@ -27,9 +26,11 @@ is worth reading before contributing.
       asserted at build time — `tools/build-toolchain.sh`
 - [x] A full session against a real OpenSSH from the host — curve25519-sha256,
       ssh-ed25519, aes256-ctr, a pty and a shell — `tools/test-host.sh`
-- [ ] Probe: measure input, screen and network on real hardware
-- [ ] Terminal and input on the PSP
-- [ ] A session
+- [x] An installable `EBOOT.PBP` that brings up Wi-Fi, connects, and runs a
+      command over a modern SSH session — `tools/build-psp.sh`
+- [ ] Confirmed on real hardware
+- [ ] A terminal grid instead of the debug screen ([#4](https://github.com/cobanov/pspssh/issues/4))
+- [ ] Input: the on-screen keyboard, and whether a Bluetooth one can be paired ([#2](https://github.com/cobanov/pspssh/issues/2))
 
 ## How it will be built
 
@@ -60,7 +61,9 @@ designed around it.
 Needs Docker or OrbStack; no local toolchain.
 
 ```sh
-tools/build-toolchain.sh
+tools/build-toolchain.sh     # once: cross-compiles wolfSSL and wolfSSH
+tools/build-psp.sh           # -> build/psp/EBOOT.PBP
+tools/test-host.sh           # the session, against a real OpenSSH, from here
 ```
 
 That cross-compiles wolfSSL and wolfSSH and bakes them into a
@@ -73,6 +76,20 @@ and AES-CTR; wolfSSH links against it perfectly well and then cannot negotiate
 with any current OpenSSH. The script asserts on both the resulting `options.h`
 and the algorithm strings in `libwolfssh.a`, so a missing primitive fails the
 build instead of the handshake.
+
+## Installing
+
+Copy `build/psp` to the memory card as `PSP/GAME/pspssh/` — on a PSP Go the
+internal storage is `ef0:` rather than `ms0:`. Edit `pspssh.cfg` there with the
+server to reach, and launch it from the XMB under Game.
+
+The Wi-Fi profile is one you have already saved in the PSP's own network
+settings; the app selects profile 1, it does not join a network itself.
+
+`pspssh.cfg` holds the password in plain text on a memory card. Anyone holding
+the console can read it, so use an account you are willing to have on a games
+machine. Key authentication and a proper prompt are both wanted, and neither is
+written yet.
 
 ## Licence
 
