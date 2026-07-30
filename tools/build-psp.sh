@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the PSP front end into an installable EBOOT.PBP.
 #
-#   tools/build-psp.sh      -> build/psp/EBOOT.PBP + pspssh.cfg
+#   tools/build-psp.sh      -> build/psp/EBOOT.PBP
+#                          (+ a starter pspssh.cfg, if there is not one)
 #
 # Runs inside the toolchain image from tools/build-toolchain.sh, so no local PSP
 # toolchain is needed. Build that first if you have not.
@@ -45,9 +46,15 @@ docker run --rm --platform linux/amd64 -v "$PWD:/src" -w /src "$IMAGE" sh -lc '
 mkdir -p build/psp
 cp src/psp/EBOOT.PBP build/psp/
 
-# Shipped alongside so the first run has something to read rather than an
-# error. The password sits in plain text on a memory card, which is stated here
-# rather than left for someone to discover.
+# Written only when it is not already there. A rebuild that silently reset
+# somebody's server, password and profile number would be a small betrayal, and
+# this file gets edited far more often than the binary gets rebuilt.
+#
+# The password sits in plain text on a memory card, which the file says rather
+# than leaving someone to discover it.
+if [ -f build/psp/pspssh.cfg ]; then
+    echo "==> keeping the existing build/psp/pspssh.cfg"
+else
 cat > build/psp/pspssh.cfg <<'CFG'
 # pspssh — the server to reach.
 #
@@ -64,6 +71,7 @@ password=
 # enough — the PSP needs its own connection saved for it.
 profile=1
 CFG
+fi
 
 SIZE=$(stat -f%z build/psp/EBOOT.PBP 2>/dev/null || stat -c%s build/psp/EBOOT.PBP)
 echo
