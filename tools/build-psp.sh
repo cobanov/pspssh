@@ -58,6 +58,11 @@ host=192.168.1.10
 port=22
 user=me
 password=
+
+# Which saved Wi-Fi connection to use, counting from 1 in the order they appear
+# under Settings > Network Settings. The network existing on your router is not
+# enough — the PSP needs its own connection saved for it.
+profile=1
 CFG
 
 SIZE=$(stat -f%z build/psp/EBOOT.PBP 2>/dev/null || stat -c%s build/psp/EBOOT.PBP)
