@@ -17,13 +17,14 @@ Target hardware is a **PSP Go (N1000)** on custom firmware. 480×272 gives an
 
 ## Status
 
-Nothing is built yet. The research is done and recorded in
-[docs/RESEARCH.md](docs/RESEARCH.md) — it decides the stack and is worth reading
-before contributing.
+The toolchain is real and the SSH library is cross-compiled; nothing runs on a
+PSP yet. [docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack and
+is worth reading before contributing.
 
 - [x] Toolchain verified: `pspdev/pspdev` builds, networking libraries present
 - [x] Prior art and platform research
-- [ ] Spike: does wolfSSH build for PSP, and is the licence combination sound
+- [x] wolfSSL and wolfSSH cross-compiled for PSP, with the modern algorithms
+      asserted at build time — `tools/build-toolchain.sh`
 - [ ] Probe: measure input, screen and network on real hardware
 - [ ] Transport working against a real OpenSSH server, from the host
 - [ ] Terminal and input on the PSP
@@ -58,21 +59,29 @@ designed around it.
 Needs Docker or OrbStack; no local toolchain.
 
 ```sh
-docker pull pspdev/pspdev
+tools/build-toolchain.sh
 ```
 
-Build instructions will land with the first buildable target.
+That cross-compiles wolfSSL and wolfSSH and bakes them into a
+`pspssh/toolchain` image. It takes a while — the pspdev image is amd64 and runs
+emulated on Apple Silicon — but it only has to happen once.
+
+**The packaged wolfSSL is not usable here**, which is why the script builds its
+own. `psp-pacman`'s build is configured for TLS and omits curve25519, Ed25519
+and AES-CTR; wolfSSH links against it perfectly well and then cannot negotiate
+with any current OpenSSH. The script asserts on both the resulting `options.h`
+and the algorithm strings in `libwolfssh.a`, so a missing primitive fails the
+build instead of the handshake.
 
 ## Licence
 
 GPL-3.0-or-later, which follows from the stack: wolfSSH is GPLv3-or-commercial,
 so anything depending on it is GPLv3.
 
-One item is still open and is tracked as an issue: the PSP wolfSSL package
-declares `GPL-2.0-only`, which does not combine with GPLv3. wolfSSL Inc. ships
-both products and intends them to be used together, so this is very probably
-imprecise packaging metadata rather than a real conflict — but it needs reading
-rather than assuming.
+wolfSSL is GPL-2.0-**or-later** — its `LICENSING` file and every source header
+say "either version 2 of the License, or (at your option) any later version" —
+so it upgrades to GPLv3 cleanly. The `GPL-2.0-only` in the PSP package metadata
+is imprecise and worth correcting upstream.
 
 [pspssh]: https://www.gamebrew.org/wiki/PSPSSH_PSP
 [wolfssh]: https://github.com/wolfSSL/wolfssh

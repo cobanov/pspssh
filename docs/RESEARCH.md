@@ -46,7 +46,7 @@ verified: it builds and the networking libraries are present
 
 | Package | Why it matters |
 | --- | --- |
-| `wolfssl` | 5.7.0, full modern crypto **including Ed25519** |
+| `wolfssl` | 5.7.0 — but configured for TLS, and missing what SSH needs. See §6. |
 | `mbedtls` | 2.28.10 with a PSP patch — but see the Ed25519 problem below |
 | `libintrafont` | PSP's own PGF fonts, variable width |
 | `pspirkeyb` | IR keyboard support — irrelevant on a Go, see §5 |
@@ -88,7 +88,7 @@ choosing difficulty for its own sake.
 
 | | curve25519-sha256 | ssh-ed25519 | chacha20-poly1305 | Shape | PSP status |
 | --- | --- | --- | --- | --- | --- |
-| **wolfSSH** + wolfSSL | yes | yes | **no** | library | wolfSSL packaged |
+| **wolfSSH** + wolfSSL | yes | yes | **no** | library | wolfSSL packaged, but needs rebuilding — §6 |
 | libssh2 + mbedTLS | yes | **no** — needs an OpenSSL backend | yes | library | mbedTLS packaged |
 | Dropbear (current) | yes | yes | yes | **program** | proven, but at 0.48 |
 | Our own, over wolfSSL | our choice | our choice | our choice | — | — |
@@ -126,16 +126,7 @@ program-shaped — porting it means gutting a main loop that assumes fork, a
 controlling terminal and POSIX signals, which is exactly the work PSPSSH did
 once and then could never carry forward.
 
-Open questions before committing, both recorded as issues:
-
-- **Licensing.** wolfSSH is GPLv3-or-commercial. The PSP wolfSSL package
-  declares `GPL-2.0-only`, and GPL-2.0-only does not combine with GPLv3.
-  Upstream wolfSSL is dual-licensed and wolfSSL Inc. ships both products
-  together, so this is very probably a packaging imprecision rather than a real
-  conflict — but it must be read properly, not assumed.
-- **Does wolfSSH build for PSP at all?** It is not in `psp-packages`. It is
-  ANSI C targeting embedded systems, so it should, but "should" is not
-  "does", and finding out is cheap.
+Both open questions have since been answered — see §6.
 
 ## 4. Screen and terminal
 
@@ -182,3 +173,81 @@ This is why the first deliverable is a probe rather than a client.
 - [Dropbear algorithm support](https://ssh-comparison.quendi.de/impls/dropbear.html) ·
   [size on MIPS](https://github.com/openwrt/openwrt/pull/2919/files)
 - [intraFont](https://github.com/PSP-Archive/intraFont)
+
+## 6. Answered: the stack builds, and the licence holds
+
+Both open questions from §3 are now settled, by doing rather than reading.
+`tools/build-toolchain.sh` is the reproducible form of everything below.
+
+### The licence combination is sound
+
+wolfSSL's `COPYING` is the GPLv2 text, and the PSP package metadata says
+`GPL-2.0-only`, which would not combine with wolfSSH's GPLv3. Both are
+misleading. The authoritative statement is in `LICENSING` and repeated at the
+top of every source file:
+
+> wolfSSL is free software; you can redistribute it and/or modify it under the
+> terms of the GNU General Public License as published by the Free Software
+> Foundation; **either version 2 of the License, or (at your option) any later
+> version.**
+
+GPL-2.0-**or-later** upgrades to GPLv3 cleanly. So wolfSSL + wolfSSH + this
+project under GPL-3.0-or-later is fine. The `GPL-2.0-only` in the PSPBUILD is
+imprecise packaging metadata and worth correcting upstream.
+
+### The packaged wolfSSL cannot do SSH
+
+This is the finding that would have cost the most to discover late.
+
+`psp-pacman`'s wolfSSL is configured for TLS — which is reasonable, because that
+is what everyone else on this platform wants it for. Its `options.h`:
+
+```
+HAVE_CHACHA              on
+HAVE_POLY1305            on
+HAVE_AESGCM              on
+HAVE_CURVE25519          MISSING
+HAVE_ED25519             MISSING
+WOLFSSL_AES_COUNTER      MISSING
+```
+
+Those three missing macros are exactly what a modern SSH session needs:
+curve25519 to agree a key, Ed25519 to verify the host key, AES-CTR to encrypt.
+
+The dangerous part is how quietly it fails. wolfSSH **builds and links happily**
+against that library — the algorithms are simply absent from the offer list, so
+the client would reach a real server, fail to agree on anything, and disconnect.
+On hardware with no debugger, that is a bad afternoon.
+
+So wolfSSL is rebuilt with `--enable-wolfssh --enable-curve25519
+--enable-ed25519 --enable-aesctr`, and the build **asserts** on the resulting
+`options.h` and on the algorithm strings inside `libwolfssh.a`. A missing
+primitive now fails the build rather than the handshake.
+
+### Three PSP-specific build facts
+
+**`--disable-term` plus `-DNO_TERMIOS`.** `WOLFSSH_TERM` is on by default and
+`port.h` then includes `<termios.h>`. The PSP toolchain ships a `termios.h`
+whose first line includes a `<sys/termios.h>` that does not exist — the header
+is simply broken. The guard is `!defined(NO_TERMIOS) && defined(WOLFSSH_TERM)`,
+so both halves are addressed rather than trusting one. Nothing is lost: that
+code puts a *local* POSIX terminal into raw mode, which is meaningless on a
+device with no tty.
+
+**`-DWOLFSSH_USER_IO`,** and this one is architecture rather than workaround.
+wolfSSH's default I/O includes `<sys/socket.h>`, which the PSP does not have;
+its BSD sockets arrive through `pspnet_inet`. The macro excludes the socket
+layer entirely and hands it to callbacks we register — so wolfSSH becomes pure
+protocol over a byte stream and the transport is ours. That is precisely what
+lets the same library run over a PSP socket and a host socket without knowing
+which it has, which is what §"host first" in the roadmap depends on.
+
+**Alpine needs `util-linux`.** wolfSSL's configure generates its options header
+with `colrm`, which busybox does not provide.
+
+### Verified output
+
+```
+wolfSSL: HAVE_CURVE25519, HAVE_ED25519, WOLFSSL_AES_COUNTER, HAVE_CHACHA, HAVE_POLY1305
+wolfSSH: curve25519-sha256, ssh-ed25519, aes256-ctr, hmac-sha2-256
+```
