@@ -342,10 +342,17 @@ static int connect_to(const settings *s)
     struct in_addr host;
     int fd;
 
+    /* Said before the attempt, not after. connect() blocks until the kernel's
+     * TCP timeout, which on an unreachable address is tens of seconds of a
+     * screen that looks frozen — and a frozen screen is indistinguishable from
+     * a crash to the person holding it. */
+    printf("  looking up %s\n", s->host);
     if (!resolve(s->host, &host)) {
         printf("  could not resolve %s\n", s->host);
         return -1;
     }
+
+    printf("  connecting to %s:%s ...\n", inet_ntoa(host), s->port);
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -459,7 +466,7 @@ int main(void)
         sceKernelExitGame();
         return 0;
     }
-    printf("  connected, starting ssh\n");
+    printf("  connected. key exchange may take a moment...\n");
 
     if (pspssh_init() != 0) {
         printf("  the ssh library would not start\n");
