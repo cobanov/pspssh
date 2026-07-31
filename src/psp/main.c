@@ -438,7 +438,13 @@ int main(void)
     pspDebugScreenInit();
     setup_callbacks();
 
-    printf("pspssh %s\n\n", PSPSSH_VERSION);
+    /* The banner. It names the build and who made it, and then says what the
+     * client actually negotiates — which is the whole reason this exists, and
+     * is worth stating where someone will read it rather than only in a
+     * README they will not. */
+    printf("pspssh v%s  -  %s\n", PSPSSH_VERSION, PSPSSH_AUTHOR);
+    printf("ssh for the psp: curve25519, ed25519, aes256-ctr\n");
+    printf("------------------------------------------------------------\n\n");
 
     if (!load_settings(&config)) {
         printf("  no usable %s next to the binary.\n\n", CONFIG_PATH);
