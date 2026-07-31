@@ -62,20 +62,50 @@ static void from_utf16(const unsigned short *from, char *to, int max)
     to[i] = '\0';
 }
 
+/* Every field asks for an unrestricted keyboard, and `kind` now only documents
+ * what the field is for.
+ *
+ * `inputtype` is a mask of the panels SELECT cycles between, and
+ * PSP_UTILITY_OSK_INPUTTYPE_ALL is zero — no restriction. Asking for digits
+ * alone, or for the URL panel, was the only place this departed from the SDK's
+ * own sample, and it was the port field that would not open on hardware.
+ *
+ * Saving one press of SELECT is not worth a field that cannot be edited. The
+ * validation that already rejects a port which is not a number is what makes
+ * the restriction unnecessary rather than merely unlucky. */
 static int input_type_for(osk_kind kind)
 {
-    switch (kind) {
-    case OSK_DIGITS:
-        return PSP_UTILITY_OSK_INPUTTYPE_LATIN_DIGIT;
-    case OSK_HOSTNAME:
-        /* The URL panel puts '.', '-' and '/' on the first page, which is most
-         * of what a hostname is made of. */
-        return PSP_UTILITY_OSK_INPUTTYPE_URL
-               | PSP_UTILITY_OSK_INPUTTYPE_LATIN_DIGIT
-               | PSP_UTILITY_OSK_INPUTTYPE_LATIN_LOWERCASE;
-    case OSK_TEXT:
-    default:
-        return PSP_UTILITY_OSK_INPUTTYPE_ALL;
+    (void)kind;
+    return PSP_UTILITY_OSK_INPUTTYPE_ALL;
+}
+
+/* Why the keyboard would not start, for showing on screen. 0 when it did. */
+static int start_error;
+
+int osk_start_error(void)
+{
+    return start_error;
+}
+
+/* Puts down a dialog somebody else left standing.
+ *
+ * Before #35, a loop that exited on its first frame could return without ever
+ * calling sceUtilityOskShutdownStart, and a dialog left initialised makes every
+ * later sceUtilityOskInitStart fail — for the rest of the session. That bug is
+ * gone, but a console already in that state has no way out short of quitting
+ * the application, so the state is cleared rather than assumed absent. */
+static void drain_any_leftover(void)
+{
+    int spins = 0;
+
+    if (sceUtilityOskGetStatus() == PSP_UTILITY_OSK_DIALOG_NONE) {
+        return;
+    }
+    sceUtilityOskShutdownStart();
+    while (sceUtilityOskGetStatus() != PSP_UTILITY_OSK_DIALOG_NONE
+            && spins++ < 300) {
+        sceUtilityOskUpdate(1);
+        sceDisplayWaitVblankStart();
     }
 }
 
@@ -134,9 +164,16 @@ osk_result osk_prompt(const char *prompt, const char *initial,
     params.datacount = 1;
     params.data = &data;
 
-    if (sceUtilityOskInitStart(&params) < 0) {
+    drain_any_leftover();
+
+    start_error = sceUtilityOskInitStart(&params);
+    if (start_error < 0) {
+        /* Handed back rather than swallowed. A keyboard that refuses to start
+         * and a button that does nothing look identical from the outside, and
+         * this code is the whole of the difference. */
         return OSK_UNAVAILABLE;
     }
+    start_error = 0;
 
     /* Frames spent waiting for the dialog to appear. Bounded, because looping
      * on a blank screen forever is the one outcome worse than saying no. */

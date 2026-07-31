@@ -43,6 +43,10 @@ typedef void (*osk_backdrop_fn)(void *ctx);
  * On OSK_CANCELLED `out` is left exactly as it was, which is what makes
  * "cancel" mean cancel: a caller passing the current value in `initial` and the
  * same buffer as `out` keeps it. */
+/* The code sceUtilityOskInitStart gave when OSK_UNAVAILABLE was returned, for
+ * putting in front of a person. Zero if the keyboard started. */
+int osk_start_error(void);
+
 osk_result osk_prompt(const char *prompt, const char *initial,
                       char *out, int out_len, osk_kind kind,
                       osk_backdrop_fn backdrop, void *backdrop_ctx);
