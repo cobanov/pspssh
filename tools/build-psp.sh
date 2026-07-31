@@ -45,16 +45,25 @@ docker run --rm --platform linux/amd64 -v "$PWD:/src" -w /src "$IMAGE" sh -lc '
 # tools/make-sfo.py. It goes between the clean and the build because make's rule
 # for it has no prerequisites: present, and make leaves it alone.
 #
-# The version goes in the title as well as in APP_VER. APP_VER is the field the
-# information panel is meant to read, and on this console it stays blank; every
-# official title puts something shaped like "01.00" there, so a "1.3.4" may
-# simply not be parsed. The title is proven to display, and on an application
-# flashed by hand the version is worth having somewhere that certainly works.
+# APP_VER has to be XX.YY — two digits, a point, two digits — and giving it
+# "1.3.4" is why the information panel showed a dash where the version goes.
+# Three components do not fit in four digits, so the minor and the patch share
+# the second pair: 1.3.7 becomes 01.37. It is a compression rather than a
+# translation, which is why the exact version also goes in the title, where it
+# is proven to display and needs no shape at all.
 echo "==> writing PARAM.SFO"
 VERSION="$(sed -n 's/^#define PSPSSH_VERSION "\(.*\)"$/\1/p' src/core/pspssh.h)"
 [ -n "$VERSION" ] || { echo "no PSPSSH_VERSION in src/core/pspssh.h" >&2; exit 1; }
+# 1.3.7 -> 01.37. Falls back to the major and minor alone if the minor ever
+# reaches ten, at which point the pair has run out of room and a wrong number is
+# worse than a rounded one.
+SFO_VER="$(printf '%s' "$VERSION" | awk -F. '{
+    if ($2 < 10 && $3 < 10) printf "%02d.%d%d", $1, $2, $3;
+    else printf "%02d.%02d", $1, $2;
+}')"
+
 tools/make-sfo.py \
-    APP_VER="$VERSION" DISC_VERSION="$VERSION" \
+    APP_VER="$SFO_VER" DISC_VERSION="$SFO_VER" \
     CATEGORY=MG DISC_ID=UCJS10041 PSP_SYSTEM_VER=1.00 \
     BOOTABLE=:1 REGION=:32768 PARENTAL_LEVEL=:1 MEMSIZE=:1 \
     "pspssh $VERSION" src/psp/PARAM.SFO
