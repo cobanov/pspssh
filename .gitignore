@@ -14,5 +14,14 @@ PARAM.SFO
 third_party/wolfssl/
 third_party/wolfssh/
 
+# Whatever SND0.AT3 was encoded from. The finished AT3 is committed because the
+# build needs it; the multi-megabyte track it came from is not the repository's
+# to carry, and is usually not ours to redistribute either.
+assets/*.mp3
+assets/*.wav
+assets/*.flac
+assets/*.m4a
+assets/*.aiff
+
 # macOS leaves these everywhere.
 .DS_Store
