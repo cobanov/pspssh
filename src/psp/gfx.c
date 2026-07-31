@@ -64,9 +64,21 @@ int gfx_init(void)
     sceGuViewport(2048, 2048, SCR_WIDTH, SCR_HEIGHT);
     sceGuScissor(0, 0, SCR_WIDTH, SCR_HEIGHT);
     sceGuEnable(GU_SCISSOR_TEST);
-    /* No depth buffer is set up and no depth test is enabled: this draws text
-     * into a flat buffer and never submits geometry, so a Z buffer would be
-     * half a megabyte of VRAM doing nothing. */
+    /* A depth buffer, even though nothing here submits geometry that needs one.
+     *
+     * It is for the system dialogs. sceUtilityOskUpdate draws through the same
+     * GE and sets its own render state, and the SDK's samples all configure a
+     * Z buffer before calling one. Leave sceGuDepthBuffer unset and GU's idea
+     * of where the depth buffer lives is offset zero — which is this
+     * application's first framebuffer. A dialog that enabled depth testing
+     * would then write depth values over the picture.
+     *
+     * Whether the OSK actually does that is not something this project can
+     * check without hardware, and 272 KB of otherwise unused VRAM is a cheap
+     * way not to need the answer. */
+    sceGuDepthBuffer((void *)(FRAME_BYTES * 2), BUF_WIDTH);
+    sceGuDepthRange(0xc350, 0x2710);
+    sceGuDepthFunc(GU_GEQUAL);
     sceGuFinish();
     sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
 

@@ -46,36 +46,20 @@ docker run --rm --platform linux/amd64 -v "$PWD:/src" -w /src "$IMAGE" sh -lc '
 mkdir -p build/psp
 cp src/psp/EBOOT.PBP build/psp/
 
-# Written only when it is not already there. A rebuild that silently reset
-# somebody's server, password and profile number would be a small betrayal, and
-# this file gets edited far more often than the binary gets rebuilt.
+# No starter pspssh.cfg any more, and its absence is deliberate.
 #
-# The password sits in plain text on a memory card, which the file says rather
-# than leaving someone to discover it.
-if [ -f build/psp/pspssh.cfg ]; then
-    echo "==> keeping the existing build/psp/pspssh.cfg"
-else
-cat > build/psp/pspssh.cfg <<'CFG'
-# pspssh — the server to reach.
+# Servers are added on the device now, so a placeholder file would be imported
+# on first launch as a host called 192.168.1.10 belonging to a user called "me"
+# — a fake entry to delete before the real one can be added. The application
+# still reads a pspssh.cfg written by hand, once, for anyone upgrading.
 #
-# This file is plain text on a memory card. Anyone holding the PSP can read it,
-# so use an account you are willing to have on a games console.
-
-host=192.168.1.10
-port=22
-user=me
-password=
-
-# Which saved Wi-Fi connection to use, counting from 1 in the order they appear
-# under Settings > Network Settings. The network existing on your router is not
-# enough — the PSP needs its own connection saved for it.
-profile=1
-CFG
-fi
+# Anything the user saves lives in pspssh.hosts beside the binary, which this
+# never touches: a rebuild that reset somebody's servers would be a small
+# betrayal, and the binary gets rebuilt far more often than the list changes.
 
 SIZE=$(stat -f%z build/psp/EBOOT.PBP 2>/dev/null || stat -c%s build/psp/EBOOT.PBP)
 echo
 echo "==> built build/psp/EBOOT.PBP ($SIZE bytes)"
 echo
-echo "Copy build/psp to the memory card as PSP/GAME/pspssh/,"
-echo "edit pspssh.cfg there, then launch it from the XMB."
+echo "Copy build/psp to the memory card as PSP/GAME/pspssh/ and launch it"
+echo "from the XMB. Add servers from the list on the first screen."
