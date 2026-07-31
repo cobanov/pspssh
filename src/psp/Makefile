@@ -4,7 +4,7 @@
 # local PSP toolchain is needed.
 
 TARGET = pspssh
-OBJS = main.o ../core/pspssh.o
+OBJS = main.o entropy.o ../core/pspssh.o
 
 INCDIR =
 CFLAGS = -G0 -O2 -Wall -Wextra -std=c99 -DNO_TERMIOS -DWOLFSSH_USER_IO

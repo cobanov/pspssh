@@ -53,7 +53,7 @@ RUN curl -fsSL -o wolfssl.tar.gz \
 WORKDIR /build/wolfssl-5.7.0-stable
 RUN ./autogen.sh \
     && ./configure --prefix=/usr/local --enable-static --disable-shared \
-        --enable-wolfssh --enable-curve25519 \
+        --enable-wolfssh --enable-harden --enable-curve25519 \
         --enable-ed25519 --enable-ed25519-stream --enable-keygen \
         --enable-aesctr --enable-chacha --enable-poly1305 --enable-sha512 \
         --disable-examples --disable-crypttests \
