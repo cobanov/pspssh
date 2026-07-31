@@ -84,6 +84,20 @@ void gfx_puts(int col, int row, const char *text,
 void gfx_printf(int col, int row, unsigned int fg, unsigned int bg,
                 const char *fmt, ...);
 
+/* Clears through the graphics engine rather than by writing pixels, and waits
+ * for it to finish.
+ *
+ * Slower than gfx_clear and worth it in exactly one place: while a system
+ * dialog is up. sceUtilityOskUpdate draws through the GE and queues its work
+ * asynchronously, so a clear done by the processor races it and can land on top
+ * of a keyboard that has already been drawn — every frame, which looks like a
+ * black screen rather than a flicker. Going through the same engine puts them
+ * in one queue, in order.
+ *
+ * Everywhere else keeps writing pixels: nothing else draws into the buffer, so
+ * there is nothing to be ordered against. */
+void gfx_gu_clear(unsigned int colour);
+
 /* Waits for the vertical blank and presents what was drawn. */
 void gfx_flip(void);
 

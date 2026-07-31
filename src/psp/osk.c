@@ -87,6 +87,8 @@ osk_result osk_prompt(const char *prompt, const char *initial,
     SceUtilityOskParams params;
     int limit;
     int finished = 0;
+    int appeared = 0;
+    int waiting = 0;
     osk_result result = OSK_CANCELLED;
 
     if (out == NULL || out_len < 2) {
@@ -136,31 +138,69 @@ osk_result osk_prompt(const char *prompt, const char *initial,
         return OSK_UNAVAILABLE;
     }
 
+    /* Frames spent waiting for the dialog to appear. Bounded, because looping
+     * on a blank screen forever is the one outcome worse than saying no. */
     while (!finished) {
-        /* The backdrop is repainted every frame for the same reason everything
-         * else is: the buffer being drawn into was last on screen two frames
-         * ago. See gfx.h. */
-        gfx_clear(GFX_BLACK);
+        int status;
+
+        /* Through the graphics engine, not by writing pixels — see gfx.h. The
+         * keyboard draws through the GE and queues its work asynchronously, so
+         * a clear done by the processor races it and wins about as often as it
+         * loses. That race is what a black screen instead of a keyboard looks
+         * like. */
+        gfx_gu_clear(GFX_BLACK);
         if (backdrop != NULL) {
+            /* After the sync inside gfx_gu_clear, so the engine is idle and
+             * these writes cannot be overtaken by the clear they follow. */
             backdrop(backdrop_ctx);
         }
 
-        switch (sceUtilityOskGetStatus()) {
+        status = sceUtilityOskGetStatus();
+        switch (status) {
         case PSP_UTILITY_OSK_DIALOG_VISIBLE:
+            appeared = 1;
             sceUtilityOskUpdate(1);
             break;
+
         case PSP_UTILITY_OSK_DIALOG_QUIT:
             sceUtilityOskShutdownStart();
             break;
+
         case PSP_UTILITY_OSK_DIALOG_FINISHED:
-        case PSP_UTILITY_OSK_DIALOG_NONE:
             finished = 1;
             break;
+
+        case PSP_UTILITY_OSK_DIALOG_NONE:
+            /* "No dialog is active" is true before it has finished starting as
+             * well as after it has shut down, and treating the two the same
+             * ended this loop on its first frame — reporting a cancellation the
+             * user never made, having cleared the screen to black on the way
+             * out. Only a dialog that was once up can have come down. */
+            if (appeared) {
+                finished = 1;
+            }
+            break;
+
         default:
+            /* INITING and INITED: keep drawing and wait. */
             break;
         }
 
         gfx_flip();
+
+        if (!appeared && ++waiting > 300) {
+            /* Five seconds. Something is wrong and the person holding the
+             * console should be told rather than left looking at a blank
+             * screen with no way back. */
+            sceUtilityOskShutdownStart();
+            while (sceUtilityOskGetStatus() != PSP_UTILITY_OSK_DIALOG_NONE
+                    && waiting++ < 600) {
+                gfx_gu_clear(GFX_BLACK);
+                sceUtilityOskUpdate(1);
+                gfx_flip();
+            }
+            return OSK_UNAVAILABLE;
+        }
 
         /* The system asked us to close while a modal dialog was up. Tearing it
          * down first is not optional: leaving the OSK running and exiting
