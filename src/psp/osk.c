@@ -19,9 +19,9 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Long enough for a password or a shell command line. The panel itself is
- * limited to what fits, and outtextlimit keeps the two in step. */
-#define OSK_MAX 256
+/* One more than OSK_MAX_TEXT, for the terminator. The two are checked against
+ * each other below rather than left to agree by memory. */
+#define OSK_MAX (OSK_MAX_TEXT + 1)
 
 /* All OSK text is UTF-16. These live at file scope rather than on the stack
  * because the dialog reads them on its own threads for as long as it is up, and
@@ -155,8 +155,8 @@ osk_result osk_prompt(const char *prompt, const char *initial,
     }
 
     limit = out_len - 1;
-    if (limit > OSK_MAX - 1) {
-        limit = OSK_MAX - 1;
+    if (limit > OSK_MAX_TEXT) {
+        limit = OSK_MAX_TEXT;
     }
 
     to_utf16(prompt, desc16, OSK_MAX);

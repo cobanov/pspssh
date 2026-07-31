@@ -263,7 +263,9 @@ static int send_all(pspssh_session *session, const char *text, int len)
 
 static void run_terminal(pspssh_session *session, const host_entry *host)
 {
-    char typed[512];
+    /* Sized to what the keyboard can actually produce, plus the newline this
+     * appends. A larger buffer would only promise a longer line than exists. */
+    char typed[OSK_MAX_TEXT + 2];
     int frames = 0;
     int ended = 0;
     const char *ending = NULL;
@@ -381,11 +383,19 @@ static void run_session(const host_entry *chosen)
 {
     /* A copy, because the password may be typed rather than stored, and because
      * the list underneath can be edited between one connection and the next. */
-    host_entry host = *chosen;
+    host_entry host;
     pspssh_config config;
     pspssh_session *session;
     char err[PSPSSH_ERROR_LEN];
     int fd;
+
+    if (chosen == NULL) {
+        /* Cannot happen from the list, which only returns an index it just
+         * bounded. Checked because the alternative on a device with no debugger
+         * is a reset with nothing on screen. */
+        return;
+    }
+    host = *chosen;
 
     if (host.password[0] == '\0'
             && !ui_ask_password(&host, host.password, sizeof(host.password))) {
