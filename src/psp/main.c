@@ -32,6 +32,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/select.h>
+#include <sys/time.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -263,6 +265,7 @@ static int start_network(int preferred)
 static int try_profile(int profile)
 {
     int state = 0;
+    int highest = 0;
     int tries = 0;
     int err;
 
@@ -294,12 +297,32 @@ static int try_profile(int profile)
         if (state != previous) {
             printf(" %d", state);
         }
+        if (state > highest) {
+            highest = state;
+        }
         sceKernelDelayThread(50 * 1000);
     }
     printf("\n");
 
     if (state != 4) {
-        printf("  profile %d stalled at state %d\n", profile, state);
+        /* The path matters more than where it stopped, and reporting only the
+         * final state hid that: a connection that reached 2 and fell back to 0
+         * was described as "never started", which is a different problem with a
+         * different fix. What counts is the furthest it got. */
+        if (highest >= 2) {
+            printf("  profile %d was refused: it found the network, asked to\n",
+                   profile);
+            printf("  join, and was turned away (reached %d, fell back to %d)\n",
+                   highest, state);
+            printf("  usually the security type — a psp does wep or wpa-tkip,\n");
+            printf("  and wpa2-aes only with the wpa2psp plugin loaded\n");
+        } else if (highest == 1) {
+            printf("  profile %d scanned but never found the network\n", profile);
+            printf("  check the ssid, and that it is on 2.4 ghz\n");
+        } else {
+            printf("  profile %d never started (state %d)\n", profile, state);
+            printf("  is there a saved connection at that number?\n");
+        }
         /* Left disconnected on the way out, or the next attempt inherits a
          * half-open association and fails for a reason that is not its own. */
         sceNetApctlDisconnect();
@@ -371,22 +394,48 @@ static int connect_to(const settings *s)
         return -1;
     }
 
-    /* Non-blocking, because the session's callbacks report "nothing yet"
-     * rather than treating a quiet socket as a dead one. */
-    {
-        int flag = 1;
-        setsockopt(fd, SOL_SOCKET, SO_NONBLOCK, &flag, sizeof(flag));
-    }
+    /* The socket is left blocking on purpose, and readiness is decided by
+     * select() instead — see wait_readable below. The obvious alternative,
+     * setsockopt(SO_NONBLOCK), does nothing here: the PSP SDK defines
+     * SO_NONBLOCK as 0, so the call compiles, runs, sets option zero, and
+     * leaves the socket exactly as it was. It looked like it worked. */
     return fd;
 }
 
 /* ------------------------------------------------------------- transport -- */
 
+/* Whether the socket has something, without committing to waiting for it.
+ *
+ * select() rather than a non-blocking socket, because the PSP's SO_NONBLOCK is
+ * a no-op and a blocking recv on a quiet socket never returns — which on a
+ * handheld is a frozen screen with no way to tell it from a crash. A short
+ * timeout gives the session its "nothing yet" answer and lets everything above
+ * carry on. */
+static int wait_readable(int fd, int milliseconds)
+{
+    fd_set readable;
+    struct timeval timeout;
+
+    FD_ZERO(&readable);
+    FD_SET(fd, &readable);
+    timeout.tv_sec = milliseconds / 1000;
+    timeout.tv_usec = (milliseconds % 1000) * 1000;
+
+    return select(fd + 1, &readable, NULL, NULL, &timeout) > 0;
+}
+
 static int sock_recv(void *io, void *buf, unsigned int len)
 {
     int fd = *(int *)io;
-    int n = recv(fd, buf, len, 0);
+    int n;
 
+    if (!wait_readable(fd, 50)) {
+        return 0;                       /* nothing yet, not a failure */
+    }
+    n = recv(fd, buf, len, 0);
+    if (n == 0) {
+        return -1;                      /* orderly close is still the end */
+    }
     if (n < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
             return 0;
@@ -408,6 +457,18 @@ static int sock_send(void *io, const void *buf, unsigned int len)
         return -1;
     }
     return n;
+}
+
+/* Yielding while the handshake waits.
+ *
+ * A millisecond is enough to let the network threads run, and short enough
+ * that the handshake is not slowed by the waiting. Without this the main
+ * thread spins and never gives them a chance, so the bytes it is waiting for
+ * never arrive — the screen sat on "key exchange may take a moment" forever. */
+static void yield_briefly(void *ctx)
+{
+    (void)ctx;
+    sceKernelDelayThread(1000);
 }
 
 /* -------------------------------------------------------------- host key -- */
@@ -488,6 +549,8 @@ int main(void)
     session_config.recv = sock_recv;
     session_config.send = sock_send;
     session_config.on_hostkey = show_and_accept;
+    session_config.on_wait = yield_briefly;
+    session_config.handshake_timeout_ms = 30000;
     /* What the debug screen actually gives us until the real terminal lands. */
     session_config.columns = 60;
     session_config.rows = 34;

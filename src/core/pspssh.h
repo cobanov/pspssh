@@ -29,7 +29,7 @@ extern "C" {
  * An application that cannot tell you which build it is makes "did I copy the
  * new one across?" unanswerable without a computer — which is exactly the
  * question that comes up while iterating on a device you flash by hand. */
-#define PSPSSH_VERSION "0.3.2"
+#define PSPSSH_VERSION "0.4.1"
 
 /* Whose it is. Shown on the first screen, because a thing somebody made by
  * hand should say so. */
@@ -61,6 +61,17 @@ typedef int (*pspssh_hostkey_fn)(void *ctx,
                                  const char *fingerprint,
                                  const unsigned char *key, unsigned int key_len);
 
+/* Called while the session is waiting for the far side to say something.
+ *
+ * Supplying one is not optional on a cooperative scheduler. The handshake
+ * retries until bytes arrive, and a retry loop that never yields does not
+ * merely waste a processor — it can starve the very thread that would have
+ * delivered those bytes, so the connection waits forever for something it is
+ * itself preventing. On a PSP that is a frozen screen. On a desktop it is only
+ * a spinning core, which is exactly how the fault stays hidden during
+ * testing. */
+typedef void (*pspssh_wait_fn)(void *ctx);
+
 typedef struct {
     const char *user;
     const char *password;   /* NULL if not using one */
@@ -71,6 +82,12 @@ typedef struct {
 
     pspssh_hostkey_fn on_hostkey;
     void *hostkey_ctx;
+
+    /* Both optional, but see the note on pspssh_wait_fn before omitting the
+     * first. handshake_timeout_ms of 0 means the built-in default. */
+    pspssh_wait_fn on_wait;
+    void *wait_ctx;
+    int handshake_timeout_ms;
 
     /* The pty the far side is told about. 0 leaves it to the server. */
     int columns;

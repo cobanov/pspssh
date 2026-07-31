@@ -117,6 +117,15 @@ static int connect_to(const char *host, const char *port)
     return fd;
 }
 
+/* The host has pre-emptive scheduling and would survive without this, but the
+ * PSP does not — so the same code path is exercised here rather than left to
+ * be discovered on hardware. */
+static void yield_briefly(void *ctx)
+{
+    (void)ctx;
+    usleep(1000);
+}
+
 /* -------------------------------------------------------------- host key -- */
 
 static char seen_fingerprint[PSPSSH_FINGERPRINT_LEN];
@@ -258,6 +267,8 @@ int main(int argc, char **argv)
     config.recv = sock_recv;
     config.send = sock_send;
     config.on_hostkey = accept_hostkey;
+    config.on_wait = yield_briefly;
+    config.handshake_timeout_ms = 30000;
     config.columns = 80;
     config.rows = 30;
 
