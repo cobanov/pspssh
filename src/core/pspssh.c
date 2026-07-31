@@ -236,9 +236,11 @@ pspssh_session *pspssh_open(const pspssh_config *config, char *err, size_t err_l
     int ret;
 
     if (config == NULL || config->recv == NULL || config->send == NULL
-            || config->user == NULL) {
+            || config->user == NULL || config->on_wait == NULL) {
         if (err != NULL && err_len > 0) {
-            snprintf(err, err_len, "a user and both transport callbacks are required");
+            snprintf(err, err_len,
+                     "a user, both transport callbacks and a wait callback"
+                     " are required");
         }
         return NULL;
     }
@@ -357,14 +359,22 @@ pspssh_session *pspssh_open(const pspssh_config *config, char *err, size_t err_l
      * desktop, which is why it survived the host tests.
      *
      * The bound exists for the same reason: a handshake that is never going to
-     * finish should say so rather than look like one still in progress. */
+     * finish should say so rather than look like one still in progress.
+     *
+     * The budget is milliseconds the wait callback says it spent, not turns of
+     * this loop. Counting turns and calling them milliseconds was only ever
+     * true because both front ends happen to sleep for one, and it would have
+     * become a lie the moment a third one did not — reporting "did not finish
+     * within 30000 ms" after a few milliseconds of spinning. The session has no
+     * clock of its own, so it asks the one thing here that does. */
     {
         int budget = config->handshake_timeout_ms > 0
                      ? config->handshake_timeout_ms : 30000;
-        /* Each turn is one attempt plus roughly a millisecond of waiting. */
-        int turns = budget;
+        int waited = 0;
 
         do {
+            int slept;
+
             ret = wolfSSH_connect(s->ssh);
             if (ret == WS_SUCCESS) {
                 break;
@@ -373,12 +383,16 @@ pspssh_session *pspssh_open(const pspssh_config *config, char *err, size_t err_l
                     && wolfSSH_get_error(s->ssh) != WS_WANT_WRITE) {
                 break;
             }
-            if (s->on_wait != NULL) {
-                s->on_wait(s->wait_ctx);
-            }
-        } while (--turns > 0);
 
-        if (ret != WS_SUCCESS && turns <= 0) {
+            /* A callback that reports nothing still costs a turn. Without that
+             * floor, one returning 0 — because it yielded rather than slept, or
+             * because its clock is too coarse — would leave the budget standing
+             * still and this loop spinning until the console is switched off. */
+            slept = s->on_wait(s->wait_ctx);
+            waited += slept > 0 ? slept : 1;
+        } while (waited < budget);
+
+        if (ret != WS_SUCCESS && waited >= budget) {
             snprintf(s->error, sizeof(s->error),
                      "the handshake did not finish within %d ms", budget);
             goto failed;
