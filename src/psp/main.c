@@ -26,6 +26,7 @@
 #include "console.h"
 #include "gfx.h"
 #include "hosts.h"
+#include "knownhosts.h"
 #include "net.h"
 #include "osk.h"
 #include "pad.h"
@@ -90,16 +91,52 @@ static int yield_briefly(void *ctx)
 
 /* -------------------------------------------------------------- host key -- */
 
-static int show_and_accept(void *ctx, const char *fingerprint,
-                           const unsigned char *key, unsigned int key_len)
+/* Called during the handshake, before anything secret is sent. Returning zero
+ * aborts the connection, and there is deliberately no third answer. */
+static int check_hostkey(void *ctx, const char *fingerprint,
+                         const unsigned char *key, unsigned int key_len)
 {
-    (void)ctx; (void)key; (void)key_len;
+    const host_entry *host = (const host_entry *)ctx;
+    const char *known = knownhosts_lookup(host->address, host->port);
+    char line[HOST_ADDRESS_LEN + 40];
 
-    /* Shown rather than checked, for now. Storing it and refusing a change is
-     * the next step; printing a fingerprint nobody compares would be theatre,
-     * so this says plainly what it is doing. */
+    (void)key; (void)key_len;
+
+    if (known != NULL) {
+        if (strcmp(known, fingerprint) == 0) {
+            console_printf("  host key %s (known)\n", fingerprint);
+            return 1;
+        }
+
+        /* The one moment the whole scheme earns its keep. No "continue
+         * anyway": on a handheld that button gets pressed reflexively, and
+         * this is the only point at which the attack is visible at all. */
+        console_printf("\n  THE HOST KEY CHANGED\n");
+        console_printf("  expected %s\n", known);
+        console_printf("  offered  %s\n", fingerprint);
+        ui_message("this is not the server you connected to before",
+                   "if you rebuilt it, forget its key from the list — SELECT",
+                   GFX_RED);
+        return 0;
+    }
+
+    /* First sight. Trusted if the user says so, and remembered either way it
+     * is answered — a "no" that did not stick would ask again next time and
+     * train the answer out of them. */
     console_printf("  host key %s\n", fingerprint);
-    console_printf("  (not yet checked against a stored one)\n");
+    snprintf(line, sizeof(line), "%s:%d has not been seen before",
+             host->address, host->port);
+    if (!ui_confirm(line, fingerprint)) {
+        return 0;
+    }
+    if (knownhosts_remember(host->address, host->port, fingerprint) != 0) {
+        /* Worth continuing: the user looked at the fingerprint and accepted
+         * it, so this connection is as verified as it was going to be. Only
+         * the next one loses out, and saying so is better than refusing a
+         * connection the user just approved. */
+        console_printf("  (it could not be remembered: %s)\n",
+                       knownhosts_error());
+    }
     return 1;
 }
 
@@ -351,7 +388,8 @@ static void run_session(const host_entry *chosen)
     config.io = &fd;
     config.recv = net_recv;
     config.send = net_send;
-    config.on_hostkey = show_and_accept;
+    config.on_hostkey = check_hostkey;
+    config.hostkey_ctx = &host;
     config.on_wait = yield_briefly;
     config.handshake_timeout_ms = 30000;
     /* The shape the far side is told about, which is the screen less the title
@@ -398,6 +436,14 @@ int main(void)
         gfx_shutdown();
         sceKernelExitGame();
         return 0;
+    }
+
+    if (knownhosts_load() != 0) {
+        /* Nothing is loaded when this fails, so every server would look new and
+         * every one would be trusted on sight. That is the check turning itself
+         * off, and it has to be said out loud. */
+        ui_message("the remembered host keys could not be read",
+                   knownhosts_error(), GFX_RED);
     }
 
     if (hosts_load() != 0) {

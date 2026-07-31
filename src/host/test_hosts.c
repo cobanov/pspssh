@@ -174,7 +174,7 @@ int main(void)
         check("a file too large to read whole is refused, not truncated",
               hosts_load() != 0);
         check("and nothing is loaded from it", hosts_count() == 0);
-        check("and it says why", strstr(hosts_error(), "too large") != NULL);
+        check("and it says why", strstr(hosts_error(), "larger") != NULL);
     }
 
     /* --- malformed lines ------------------------------------------------ */

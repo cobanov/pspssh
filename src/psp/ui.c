@@ -16,6 +16,7 @@
 
 #include "ui.h"
 #include "gfx.h"
+#include "knownhosts.h"
 #include "osk.h"
 #include "pad.h"
 
@@ -389,7 +390,7 @@ static void draw_list(int selected, int top)
     int i;
 
     ui_frame("pspssh",
-             "X  connect    []  edit    /\\  delete    O  quit");
+             "X connect  [] edit  /\\ delete  SEL forget key  O quit");
 
     if (count == 0) {
         gfx_puts(4, LIST_TOP + 1, "no hosts saved yet.",
@@ -482,6 +483,31 @@ int ui_host_list(void)
             if (ui_confirm(question, "retyping it on the keyboard is the cost")
                     && hosts_remove(selected) != 0) {
                 ui_message("it could not be removed", hosts_error(), GFX_RED);
+            }
+        } else if ((pressed & PSP_CTRL_SELECT) != 0 && selected < count) {
+            /* Forgetting a host key deliberately, which servers that are
+             * genuinely rebuilt need.
+             *
+             * It lives here rather than on the screen that refuses a changed
+             * key, and that is the whole design: dismissing the alarm means
+             * leaving the failed connection, finding the host, and confirming
+             * something that says what it means. An "accept anyway" button on
+             * the warning itself would be pressed before it was read. */
+            const host_entry *entry = hosts_at(selected);
+            char question[HOST_NAME_LEN + 32];
+
+            if (knownhosts_lookup(entry->address, entry->port) == NULL) {
+                ui_message("nothing is remembered for that host",
+                           "its key will be trusted on first sight", GFX_GREY);
+                continue;
+            }
+            snprintf(question, sizeof(question), "forget the key for \"%s\"?",
+                     entry->name);
+            if (ui_confirm(question,
+                           "only if you know why it changed — this is the check")
+                    && knownhosts_forget(entry->address, entry->port) != 0) {
+                ui_message("it could not be forgotten", knownhosts_error(),
+                           GFX_RED);
             }
         } else if ((pressed & PSP_CTRL_CIRCLE) != 0) {
             return -1;
