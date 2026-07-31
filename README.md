@@ -1,7 +1,24 @@
-# pspssh
+<p align="center">
+  <img src="assets/PIC1.PNG" alt="pspssh" width="620">
+</p>
 
-An SSH client for the PlayStation Portable that can actually talk to a current
-OpenSSH server.
+<h1 align="center">pspssh</h1>
+
+<p align="center">
+  An SSH client for the PlayStation Portable that can actually talk to a
+  current OpenSSH server.
+</p>
+
+<p align="center">
+  <a href="https://github.com/cobanov/pspssh/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/cobanov/pspssh?color=004aad&labelColor=1a1a1a"></a>
+  <img alt="tests" src="https://img.shields.io/badge/tests-122%20offline%20%2B%206%20live-004aad?labelColor=1a1a1a">
+  <img alt="hardware" src="https://img.shields.io/badge/PSP%20Go-confirmed-004aad?labelColor=1a1a1a">
+  <a href="LICENSE"><img alt="licence" src="https://img.shields.io/badge/licence-GPL--3.0--or--later-004aad?labelColor=1a1a1a"></a>
+</p>
+
+---
+
+## Why
 
 There is already an SSH client for the PSP — [PSPSSH][pspssh], a 2008 port of
 Dropbear 0.48. It cannot connect to anything modern: it offers
@@ -122,6 +139,8 @@ to forget the old key. That is deliberately not on the warning screen: a button
 next to an alarm gets pressed instead of read.
 
 ## The artwork
+
+<img src="assets/ICON0.PNG" alt="the icon" width="144" align="right">
 
 `assets/` holds what the XMB shows, packed into the `EBOOT.PBP` rather than
 copied beside it. Each is picked up when present and the build works without
