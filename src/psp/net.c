@@ -33,126 +33,152 @@
 
 static int stack_started;
 static int connected;
-/* Which saved connections exist, and what they are called.
+/* The saved connections, by number and by name.
  *
  * Guessing a profile number was a mistake worth undoing rather than papering
  * over. Deleting a connection in the PSP's settings does not necessarily
  * renumber the ones after it, so "the only remaining connection" is not
  * reliably number 1 — which is exactly how a profile that works perfectly in
  * the browser fails here. The device knows the answer, so it gets asked. */
-static int list_profiles(int *found, int max)
+typedef struct {
+    int id;
+    char name[64];
+} saved_connection;
+
+static int list_profiles(saved_connection *found, int max)
 {
     netData data;
     int count = 0;
     int id;
 
-    console_printf("  saved connections:\n");
     for (id = 1; id <= 10 && count < max; id++) {
         if (sceUtilityCheckNetParam(id) != 0) {
             continue;
         }
-        found[count++] = id;
+
+        found[count].id = id;
+        found[count].name[0] = '\0';
 
         memset(&data, 0, sizeof(data));
-        console_printf("   %d:", id);
         if (sceUtilityGetNetParam(id, PSP_NETPARAM_NAME, &data) == 0) {
-            console_printf(" %s", data.asString);
+            snprintf(found[count].name, sizeof(found[count].name), "%s",
+                     data.asString);
         }
-        memset(&data, 0, sizeof(data));
-        if (sceUtilityGetNetParam(id, PSP_NETPARAM_SSID, &data) == 0) {
-            console_printf("  (ssid %s)", data.asString);
+        if (found[count].name[0] == '\0') {
+            /* A connection saved without a name still has to be nameable, or
+             * the log says "trying" and nothing else. */
+            snprintf(found[count].name, sizeof(found[count].name),
+                     "connection %d", id);
         }
-        console_printf("\n");
-    }
-    if (count == 0) {
-        console_printf("   none. create one under Settings > Network Settings.\n");
+        count++;
     }
     return count;
 }
 
-static int try_profile(int profile)
+/* What the radio is doing, in words.
+ *
+ * These used to be printed as the numbers the SDK returns — "joining profile 1
+ * 2 3 6 4" — which is a debugging aid that became the interface. The numbers
+ * are meaningless to anyone who has not read pspnet_apctl.h, and a row of them
+ * reads as the application flailing rather than as five things happening in
+ * order. */
+static const char *stage_name(int state)
+{
+    switch (state) {
+    case 0: return "disconnected";
+    case 1: return "scanning";
+    case 2: return "joining";
+    case 3: return "asking for an address";
+    case 4: return "connected";
+    case 5: return "authenticating";
+    case 6: return "exchanging keys";
+    default: return "working";
+    }
+}
+
+static int try_profile(const saved_connection *profile)
 {
     int state = 0;
     int highest = 0;
     int tries = 0;
     int err;
 
-    err = sceNetApctlConnect(profile);
+    console_printf("  %s\n", profile->name);
+
+    err = sceNetApctlConnect(profile->id);
     if (err != 0) {
-        console_printf("  profile %d refused to start (0x%08x)\n", profile, err);
+        console_printf("    would not start (0x%08x)\n", err);
         return 0;
     }
 
     /* State 4 is "associated and holding an address". Anything less and a
      * socket would fail in a way that looks like the server's fault.
      *
-     * The states are shown as they change rather than only at the end. Where it
-     * stalls is the diagnosis: stuck at 0 means the connection never started at
-     * all, which on this device almost always means there is no saved profile
-     * with that number — the network existing on the router is not enough, the
-     * PSP needs its own connection under Settings > Network Settings.
+     * The stages are named as they change rather than counted at the end,
+     * because where it stops is the diagnosis and a person should not have to
+     * hold a table of state numbers to read it.
      *
      * Thirty seconds, not ten. A cold radio scanning 2.4 GHz and then waiting on
      * DHCP is routinely slower than a first guess suggests, and giving up early
      * reports a working network as a broken one. */
-    console_printf("  joining profile %d", profile);
+    console_printf("   ");
     while (state != 4 && tries++ < 600 && !pad_exit_requested()) {
         int previous = state;
 
         if (sceNetApctlGetState(&state) < 0) {
             break;
         }
-        if (state != previous) {
-            console_printf(" %d", state);
+        if (state != previous && state != 0) {
+            console_printf(" %s", stage_name(state));
         }
         if (state > highest) {
             highest = state;
         }
         sceKernelDelayThread(50 * 1000);
     }
-    console_printf("\n");
 
-    if (state != 4) {
-        /* The path matters more than where it stopped, and reporting only the
-         * final state hid that: a connection that reached 2 and fell back to 0
-         * was described as "never started", which is a different problem with a
-         * different fix. What counts is the furthest it got. */
-        if (highest >= 2) {
-            console_printf("  profile %d was refused: it found the network, asked\n",
-                           profile);
-            console_printf("  to join, and was turned away (reached %d, fell to %d)\n",
-                           highest, state);
-            console_printf("  usually the security type — a psp does wep or\n");
-            console_printf("  wpa-tkip, and wpa2-aes only with wpa2psp loaded\n");
-        } else if (highest == 1) {
-            console_printf("  profile %d scanned but never found the network\n",
-                           profile);
-            console_printf("  check the ssid, and that it is on 2.4 ghz\n");
-        } else {
-            console_printf("  profile %d never started (state %d)\n", profile, state);
-            console_printf("  is there a saved connection at that number?\n");
-        }
-        /* Left disconnected on the way out, or the next attempt inherits a
-         * half-open association and fails for a reason that is not its own. */
-        sceNetApctlDisconnect();
-        sceKernelDelayThread(500 * 1000);
-        return 0;
-    }
-
-    {
+    if (state == 4) {
         union SceNetApctlInfo info;
+
         if (sceNetApctlGetInfo(8, &info) == 0) {
-            console_printf("  wi-fi up, address %s\n", info.ip);
+            console_printf(", address %s\n", info.ip);
+        } else {
+            console_printf(", connected\n");
         }
+        return 1;
     }
-    return 1;
+
+    /* The path matters more than where it stopped, and reporting only the
+     * final state hid that: a connection that reached "joining" and fell back
+     * to nothing was described as "never started", which is a different
+     * problem with a different fix. What counts is the furthest it got. */
+    if (highest >= 2) {
+        console_printf(", turned away\n");
+        console_printf("    it found the network and was refused. usually the\n");
+        console_printf("    security type: a psp does wep and wpa-tkip, and\n");
+        console_printf("    wpa2-aes only with the wpa2psp plugin loaded.\n");
+    } else if (highest == 1) {
+        console_printf(", not found\n");
+        console_printf("    it scanned and never saw that network. check the\n");
+        console_printf("    ssid, and that it is on 2.4 ghz.\n");
+    } else {
+        console_printf(" nothing happened\n");
+        console_printf("    the radio never started. is the wlan switch on?\n");
+    }
+
+    /* Left disconnected on the way out, or the next attempt inherits a
+     * half-open association and fails for a reason that is not its own. */
+    sceNetApctlDisconnect();
+    sceKernelDelayThread(500 * 1000);
+    return 0;
 }
 
 int net_start(int preferred)
 {
-    int available[10];
+    saved_connection available[10];
     int count;
     int i;
+    int chosen = -1;
 
     if (connected) {
         return 1;
@@ -174,25 +200,48 @@ int net_start(int preferred)
 
     count = list_profiles(available, 10);
     if (count == 0) {
+        console_printf("  no saved wi-fi connections.\n");
+        console_printf("  create one under Settings > Network Settings first —\n");
+        console_printf("  this picks a saved connection, it does not join a\n");
+        console_printf("  network by itself.\n");
         return 0;
     }
-    console_printf("\n");
 
-    /* The configured one first, then everything else. A wrong number in a saved
-     * host should cost a few seconds, not an evening. */
-    if (preferred > 0 && try_profile(preferred)) {
+    /* The one the host asked for, if it is still there. A saved number can
+     * outlive the connection it named, because deleting one in the PSP's
+     * settings does not renumber the rest. */
+    for (i = 0; i < count; i++) {
+        if (available[i].id == preferred) {
+            chosen = i;
+        }
+    }
+
+    if (preferred > 0 && chosen < 0) {
+        console_printf("  this host asks for wi-fi profile %d, which is not\n",
+                       preferred);
+        console_printf("  saved on this console any more. trying the %d that\n",
+                       count);
+        console_printf("  %s.\n\n", count == 1 ? "is" : "are");
+    } else if (preferred == 0) {
+        console_printf("  no wi-fi profile set for this host, so each saved\n");
+        console_printf("  connection is tried in turn.\n\n");
+    }
+
+    if (chosen >= 0 && try_profile(&available[chosen])) {
         connected = 1;
         return 1;
     }
+
     for (i = 0; i < count && !pad_exit_requested(); i++) {
-        if (available[i] == preferred) {
-            continue;
+        if (i == chosen) {
+            continue;               /* already tried, and it did not work */
         }
-        if (try_profile(available[i])) {
+        if (try_profile(&available[i])) {
             connected = 1;
-            if (preferred > 0) {
-                console_printf("  (set this host's profile to %d to go straight"
-                               " there)\n", available[i]);
+            if (preferred != available[i].id) {
+                console_printf("\n  set this host's wi-fi profile to %d to come\n",
+                               available[i].id);
+                console_printf("  straight here next time.\n");
             }
             return 1;
         }
