@@ -8,25 +8,13 @@
 
 #include "hosts.h"
 
-/* The memory card, or a directory on a laptop.
- *
- * hosts.c is the one PSP module with logic worth testing away from a PSP —
- * parsing, validation and the atomic save are all decidable on a host, and
- * finding out that a host list round-trips wrongly by losing somebody's servers
- * is a bad way to find out. src/host/psp_io_shim.h supplies the six sceIo
- * calls over POSIX so tools/test-host.sh can drive the real code. */
-#ifdef PSPSSH_HOST_TEST
-#include "../host/psp_io_shim.h"
-#else
-#include <pspiofilemgr.h>
-#endif
+#include "cardfile.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define HOSTS_PATH     "pspssh.hosts"
-#define HOSTS_TEMP     "pspssh.hosts.tmp"
 #define LEGACY_PATH    "pspssh.cfg"
 
 /* Every field of every record, plus separators and a generous margin. A file
@@ -76,24 +64,12 @@ void hosts_blank(host_entry *entry)
     entry->profile = 0;
 }
 
-/* Overwriting through a volatile pointer, so the compiler cannot decide that a
- * buffer nobody reads again does not need clearing — which is exactly the
- * optimisation that turns a memset of a dead password into nothing at all. */
-static void wipe(void *data, unsigned int len)
-{
-    volatile unsigned char *at = (volatile unsigned char *)data;
-
-    while (len-- > 0) {
-        *at++ = 0;
-    }
-}
-
 void hosts_forget_passwords(void)
 {
     int i;
 
     for (i = 0; i < HOSTS_MAX; i++) {
-        wipe(entries[i].password, sizeof(entries[i].password));
+        cardfile_wipe(entries[i].password, sizeof(entries[i].password));
     }
 }
 
@@ -189,47 +165,6 @@ static void take_line(char *line)
     entries[count++] = entry;
 }
 
-/* Reads a whole file, or reports that it could not.
- *
- * The old config reader took the first 1023 bytes and parsed whatever landed,
- * so a longer file lost its tail mid-line — and `password=hunter2seventeen`
- * cut to `password=hunter2` is an authentication failure whose cause is
- * invisible, because the file on the card plainly says the right thing. With a
- * list that grows by an entry every time somebody adds a server, that stopped
- * being theoretical. */
-static int read_whole(const char *path, char *buffer, int max)
-{
-    SceUID fd;
-    int total = 0;
-
-    fd = sceIoOpen(path, PSP_O_RDONLY, 0777);
-    if (fd < 0) {
-        return -1;          /* absent is not an error; the caller decides */
-    }
-
-    for (;;) {
-        int n = sceIoRead(fd, buffer + total, max - total);
-
-        if (n < 0) {
-            sceIoClose(fd);
-            fail("the file could not be read");
-            return -2;
-        }
-        if (n == 0) {
-            break;
-        }
-        total += n;
-        if (total >= max) {
-            sceIoClose(fd);
-            fail("the file is too large to be a host list");
-            return -2;
-        }
-    }
-    sceIoClose(fd);
-    buffer[total] = '\0';
-    return total;
-}
-
 static void parse(char *text)
 {
     char *line = text;
@@ -260,7 +195,7 @@ static void import_legacy(void)
     host_entry entry;
     char *line;
 
-    if (read_whole(LEGACY_PATH, buffer, sizeof(buffer) - 1) < 0) {
+    if (cardfile_read(LEGACY_PATH, buffer, sizeof(buffer) - 1) < 0) {
         return;
     }
 
@@ -309,70 +244,46 @@ static void import_legacy(void)
         entries[count++] = entry;
         save();
     }
-    wipe(buffer, sizeof(buffer));
+    cardfile_wipe(buffer, sizeof(buffer));
 }
 
 /* ----------------------------------------------------------------- save -- */
 
-static int write_all(SceUID fd, const char *text, int len)
-{
-    int written = 0;
-
-    while (written < len) {
-        int n = sceIoWrite(fd, text + written, len - written);
-
-        if (n <= 0) {
-            return -1;
-        }
-        written += n;
-    }
-    return 0;
-}
-
+/* The whole list as text, then one atomic write.
+ *
+ * Building it in memory first is what lets cardfile own the atomicity: at
+ * twenty-four entries this is under six kilobytes, and a partial write that
+ * cannot happen is better than one that is handled. */
 static int save(void)
 {
-    SceUID fd;
-    char line[HOST_NAME_LEN + HOST_ADDRESS_LEN + HOST_USER_LEN
-              + HOST_PASSWORD_LEN + 32];
+    char text[HOSTS_MAX * (HOST_NAME_LEN + HOST_ADDRESS_LEN + HOST_USER_LEN
+                           + HOST_PASSWORD_LEN + 32)];
+    int at = 0;
     int i;
-
-    /* Written beside the real file and moved into place, so a battery pull
-     * halfway through a write cannot leave a truncated list. The failure this
-     * avoids is losing every saved server while adding one. */
-    fd = sceIoOpen(HOSTS_TEMP, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
-    if (fd < 0) {
-        fail("the host list could not be opened for writing");
-        return -1;
-    }
+    int result;
 
     for (i = 0; i < count; i++) {
-        int len = snprintf(line, sizeof(line), "%s\t%s\t%d\t%s\t%s\t%d\n",
+        int len = snprintf(text + at, sizeof(text) - (size_t)at,
+                           "%s\t%s\t%d\t%s\t%s\t%d\n",
                            entries[i].name, entries[i].address, entries[i].port,
                            entries[i].user, entries[i].password,
                            entries[i].profile);
 
-        if (len <= 0 || len >= (int)sizeof(line)
-                || write_all(fd, line, len) != 0) {
-            sceIoClose(fd);
-            sceIoRemove(HOSTS_TEMP);
-            wipe(line, sizeof(line));
-            fail("the host list could not be written");
+        if (len <= 0 || at + len >= (int)sizeof(text)) {
+            cardfile_wipe(text, sizeof(text));
+            fail("the host list did not fit");
             return -1;
         }
+        at += len;
     }
-    sceIoClose(fd);
-    wipe(line, sizeof(line));
 
-    /* Rename cannot replace an existing file on this filesystem, so the old one
-     * goes first. That is the one moment where neither file is in place; if the
-     * rename then fails, the temporary file is still there and hosts_load picks
-     * it up next time rather than starting empty. */
-    sceIoRemove(HOSTS_PATH);
-    if (sceIoRename(HOSTS_TEMP, HOSTS_PATH) < 0) {
-        fail("the host list was written but could not be moved into place");
-        return -1;
+    result = cardfile_write(HOSTS_PATH, text, at);
+    /* Passwords were in there. */
+    cardfile_wipe(text, sizeof(text));
+    if (result != 0) {
+        fail(cardfile_error());
     }
-    return 0;
+    return result;
 }
 
 /* ----------------------------------------------------------------- load -- */
@@ -385,27 +296,20 @@ int hosts_load(void)
     count = 0;
     last_error[0] = '\0';
 
-    len = read_whole(HOSTS_PATH, buffer, sizeof(buffer) - 1);
+    len = cardfile_read(HOSTS_PATH, buffer, sizeof(buffer) - 1);
     if (len == -2) {
+        fail(cardfile_error());
         return -1;
     }
     if (len < 0) {
-        /* No host file. A save that was interrupted after the old file was
-         * removed leaves the new one under its temporary name, so that is
-         * looked for before falling back to the old single-server config. */
-        len = read_whole(HOSTS_TEMP, buffer, sizeof(buffer) - 1);
-        if (len >= 0) {
-            parse(buffer);
-            wipe(buffer, sizeof(buffer));
-            save();
-            return 0;
-        }
+        /* Nothing saved yet, so the old single-server config is imported if
+         * there is one. */
         import_legacy();
         return 0;
     }
 
     parse(buffer);
-    wipe(buffer, sizeof(buffer));
+    cardfile_wipe(buffer, sizeof(buffer));
     return 0;
 }
 
@@ -451,7 +355,7 @@ int hosts_remove(int index)
         fail("that host is no longer in the list");
         return -1;
     }
-    wipe(entries[index].password, sizeof(entries[index].password));
+    cardfile_wipe(entries[index].password, sizeof(entries[index].password));
     for (i = index; i + 1 < count; i++) {
         entries[i] = entries[i + 1];
     }
