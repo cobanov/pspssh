@@ -43,5 +43,33 @@ LIBS = -lwolfssh -lwolfssl -lm -lpspgu
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = pspssh
 
+# What the XMB shows for this application, packed into the EBOOT itself rather
+# than copied to the card beside it.
+#
+# Named only when present, so the build works with none of them and picks each
+# one up the moment it is added — the alternative is a missing artwork file
+# failing a build that has nothing to do with artwork.
+#
+#   ICON0.PNG   144x80    the icon in the game list
+#   ICON1.PMF   144x80    an animation shown instead of the icon
+#   PIC0.PNG    480x272   drawn over the background
+#   PIC1.PNG    480x272   the background, when this is the highlighted item
+#   SND0.AT3    ATRAC3    music, looped while it is highlighted
+ifneq ($(wildcard ICON0.PNG),)
+PSP_EBOOT_ICON = ICON0.PNG
+endif
+ifneq ($(wildcard ICON1.PMF),)
+PSP_EBOOT_ICON1 = ICON1.PMF
+endif
+ifneq ($(wildcard PIC0.PNG),)
+PSP_EBOOT_PIC0 = PIC0.PNG
+endif
+ifneq ($(wildcard PIC1.PNG),)
+PSP_EBOOT_PIC1 = PIC1.PNG
+endif
+ifneq ($(wildcard SND0.AT3),)
+PSP_EBOOT_SND0 = SND0.AT3
+endif
+
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak

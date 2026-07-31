@@ -38,8 +38,9 @@ Add your servers on the device, pick one, get a shell.
   system on-screen keyboard. No memory card shuffling.
 - **Host keys are remembered.** Trust on first use, and a changed key is
   refused rather than warned about.
-- **A real terminal.** Colours, cursor addressing, erase and scroll regions —
-  what a shell sends, drawn as a shell means it.
+- **A real terminal, 80 columns wide.** Colours, cursor addressing, erase and
+  scroll regions — what a shell sends, drawn as a shell means it, at the width
+  it was formatted for.
 - **Passwords are optional.** Leave one out and it is asked for at connect
   time, then forgotten.
 
@@ -188,7 +189,9 @@ say "either version 2 of the License, or (at your option) any later version" —
 so it upgrades to GPLv3 cleanly. The `GPL-2.0-only` in the PSP package metadata
 is imprecise and worth correcting upstream.
 
-The 8×8 font in `third_party/` is public domain, by Daniel Hepper.
+The screen font is [Spleen](https://github.com/fcambus/spleen) 6×12 by Frédéric
+Cambus, BSD-2-Clause, in `third_party/` with `tools/make-font.py` deriving the
+header the build uses.
 
 [pspssh]: https://www.gamebrew.org/wiki/PSPSSH_PSP
 [wolfssh]: https://github.com/wolfSSL/wolfssh

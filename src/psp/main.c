@@ -154,7 +154,7 @@ static void wipe(void *data, unsigned int len)
 }
 
 /* The title row and the key legend take one line each, so the shell gets the
- * thirty-two between them. */
+ * twenty between them. */
 #define TERM_ROWS (GFX_ROWS - 2)
 #define TERM_TOP  1
 

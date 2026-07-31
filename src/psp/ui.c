@@ -30,7 +30,10 @@
 #include <string.h>
 
 #define LIST_TOP     4
-#define LIST_ROWS    22
+/* Derived rather than chosen, so it cannot outlive the screen it was sized
+ * for. The three rows below it are the scroll indicator, the footer, and the
+ * one the footer needs beneath it. */
+#define LIST_ROWS    (GFX_ROWS - LIST_TOP - 3)
 #define FOOTER_ROW   (GFX_ROWS - 2)
 
 /* ------------------------------------------------------------------ frame -- */
@@ -180,7 +183,9 @@ static void draw_form(void *ctx)
              "X  change      []  save      O  cancel");
 
     for (i = 0; i < FIELD_COUNT; i++) {
-        int row = LIST_TOP + i * 2;
+        /* One row a field, not two. Twelve rows of double spacing fitted a
+         * 34-row screen and does not fit a 22-row one. */
+        int row = LIST_TOP + i;
         int chosen = (i == form_field);
         unsigned int bg = chosen ? GFX_ACCENT : GFX_BLACK;
         char value[HOST_ADDRESS_LEN + 8];
@@ -189,11 +194,11 @@ static void draw_form(void *ctx)
         gfx_fill_cells(1, row, GFX_COLS - 2, 1, bg);
         gfx_puts(2, row, chosen ? ">" : " ", GFX_WHITE, bg);
         gfx_printf(4, row, GFX_GREY, bg, "%-14s", field_labels[i]);
-        gfx_puts(19, row, value, GFX_WHITE, bg);
+        gfx_puts(20, row, value, GFX_WHITE, bg);
     }
 
     if (form.password[0] != '\0') {
-        gfx_puts(2, LIST_TOP + FIELD_COUNT * 2 + 1,
+        gfx_puts(2, LIST_TOP + FIELD_COUNT + 2,
                  "a stored password is plain text on the memory card",
                  GFX_DIM, GFX_BLACK);
     }
@@ -439,8 +444,8 @@ static void draw_list(int selected, int top)
         } else {
             const host_entry *entry = hosts_at(index);
 
-            gfx_printf(4, row, GFX_WHITE, bg, "%-20s", entry->name);
-            gfx_printf(25, row, GFX_GREY, bg, "%s@%s:%d",
+            gfx_printf(4, row, GFX_WHITE, bg, "%-23s", entry->name);
+            gfx_printf(28, row, GFX_GREY, bg, "%s@%s:%d",
                        entry->user, entry->address, entry->port);
         }
     }
