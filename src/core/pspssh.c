@@ -22,6 +22,7 @@
 #include <wolfssh/ssh.h>
 #include <wolfssh/error.h>
 #include <wolfssl/wolfcrypt/sha256.h>
+#include <wolfssl/wolfcrypt/random.h>
 
 struct pspssh_session {
     WOLFSSH_CTX *ctx;
@@ -300,7 +301,26 @@ pspssh_session *pspssh_open(const pspssh_config *config, char *err, size_t err_l
 
     s->ssh = wolfSSH_new(s->ctx);
     if (s->ssh == NULL) {
-        set_error(s, "wolfSSH session could not be created");
+        /* wolfSSH_new returns NULL and nothing else, so the usual suspect is
+         * checked here rather than guessed at from a device with no debugger.
+         *
+         * Creating a session initialises a random number generator, and
+         * wolfSSL's seed comes from somewhere platform-specific — /dev/urandom
+         * on a desktop, and on a PSP from whatever CUSTOM_RAND_GENERATE_SEED
+         * points at. If that is missing or failing, every session fails at
+         * birth with no clue as to why. Asking the RNG directly turns "could
+         * not be created" into an error code that names the problem. */
+        WC_RNG probe;
+        int rng = wc_InitRng(&probe);
+
+        if (rng != 0) {
+            snprintf(s->error, sizeof(s->error),
+                     "no usable random source: wc_InitRng gave %d", rng);
+        } else {
+            wc_FreeRng(&probe);
+            set_error(s, "wolfSSH session could not be created"
+                         " (the random source is fine, so this is memory)");
+        }
         goto failed;
     }
 

@@ -50,6 +50,13 @@ RUN curl -fsSL -o wolfssl.tar.gz \\
       https://github.com/wolfSSL/wolfssl/archive/refs/tags/v${WOLFSSL_VERSION}-stable.tar.gz \\
     && tar xzf wolfssl.tar.gz
 
+# wolfSSL compiles with -Werror, and random.c calls the seed function without a
+# prototype in sight — an implicit declaration is then fatal. A forced include
+# gives it one without patching the source.
+RUN printf '%s\\n' \\
+        'int pspssh_generate_seed(unsigned char *output, unsigned int sz);' \\
+        > /build/pspssh_seed.h
+
 WORKDIR /build/wolfssl-${WOLFSSL_VERSION}-stable
 
 # --host puts autotools into cross-compile mode. Without it, configure runs the
@@ -59,6 +66,19 @@ WORKDIR /build/wolfssl-${WOLFSSL_VERSION}-stable
 # three primitives after it are named anyway: the preset is not documented as a
 # stable contract, and a silently missing curve25519 is the failure this whole
 # script exists to prevent.
+#
+# CUSTOM_RAND_GENERATE_SEED is not optional here, it is the difference between
+# working and not. A PSP has no /dev/urandom and no hardware RNG, so wolfSSL
+# found nothing to seed from and wc_InitRng returned RNG_FAILURE_E (-199) —
+# which surfaced as every session failing to be created, with no clue why.
+#
+# The named function lives in src/psp/entropy.c and is resolved at the final
+# link. It harvests timing jitter into a SHA-256 pool and refuses to produce
+# anything if the clock turns out not to jitter, because predictable bytes here
+# are a guessable session key.
+#
+# This is the one place the PSP and host builds deliberately differ. An entropy
+# source cannot be platform-neutral, and the host has a real one.
 #
 # --enable-static --disable-shared because the PSP links one binary.
 # --disable-filesystem: keys and known-hosts are ours to handle, and newlib's
@@ -70,6 +90,7 @@ RUN ./autogen.sh \\
         --enable-static \\
         --disable-shared \\
         --enable-wolfssh \\
+        --enable-harden \\
         --enable-curve25519 \\
         --enable-ed25519 \\
         --enable-ed25519-stream \\
@@ -82,7 +103,9 @@ RUN ./autogen.sh \\
         --disable-crypttests \\
         --disable-oldtls \\
         CC=psp-gcc AR=psp-ar RANLIB=psp-ranlib \\
-        CFLAGS="-G0 -O2 -DWOLFSSL_USER_IO -DNO_WRITEV -DNO_WOLFSSL_DIR -DSINGLE_THREADED" \\
+        CFLAGS="-G0 -O2 -DWOLFSSL_USER_IO -DNO_WRITEV -DNO_WOLFSSL_DIR -DSINGLE_THREADED \\
+                -DCUSTOM_RAND_GENERATE_SEED=pspssh_generate_seed \\
+                -include /build/pspssh_seed.h" \\
     && make -j"\$(nproc)" \\
     && make install
 
