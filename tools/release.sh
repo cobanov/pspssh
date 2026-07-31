@@ -95,10 +95,20 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
     fail "$TAG already exists"
 fi
 
-# A release nobody can build is not a release. This is the last gate rather than
-# the first because it is by far the slowest.
-echo "==> building, because a tag on a broken tree helps nobody"
-tools/build-psp.sh >/dev/null
+# A release nobody can build is not a release.
+#
+# Built from a fresh clone rather than from this working tree, and that is the
+# whole point of the step. v1.1.0 shipped unbuildable: the font every glyph
+# comes from was gitignored, so `git clone && tools/build-psp.sh` failed at the
+# first compile. Nobody noticed because the file was sitting in the tree it had
+# been written in, and "it compiles here" is not the claim that matters.
+#
+# The last gate rather than the first, because it is by far the slowest.
+echo "==> building from a fresh clone, because \"it compiles here\" is not the claim"
+CLONE="$(mktemp -d)"
+trap 'rm -rf "$CLONE"' EXIT
+git clone --quiet --depth 1 "file://$PWD" "$CLONE/pspssh"
+( cd "$CLONE/pspssh" && tools/build-psp.sh >/dev/null ) || fail "a fresh clone does not build"
 
 PREVIOUS="$(latest_tag)"
 echo

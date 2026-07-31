@@ -7,8 +7,12 @@ out/
 EBOOT.PBP
 PARAM.SFO
 
-# Fetched, not committed: third-party sources with their own licences.
-third_party/
+# Sources fetched during the toolchain build, which have their own licences and
+# their own repositories. third_party/ itself is committed — the font in it is
+# needed to compile, and ignoring the whole directory meant a fresh clone did
+# not build at all.
+third_party/wolfssl/
+third_party/wolfssh/
 
 # macOS leaves these everywhere.
 .DS_Store
