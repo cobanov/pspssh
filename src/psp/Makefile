@@ -55,20 +55,27 @@ PSP_EBOOT_TITLE = pspssh
 #   PIC0.PNG    480x272   drawn over the background
 #   PIC1.PNG    480x272   the background, when this is the highlighted item
 #   SND0.AT3    ATRAC3    music, looped while it is highlighted
-ifneq ($(wildcard ICON0.PNG),)
-PSP_EBOOT_ICON = ICON0.PNG
+#
+# The names are the ones pack-pbp documents. They are not what the format cares
+# about — the slots are positional and the file could be called anything — but
+# a directory of files named after the slot they fill is a directory nobody has
+# to consult a Makefile to understand.
+ASSETS = ../../assets
+
+ifneq ($(wildcard $(ASSETS)/ICON0.PNG),)
+PSP_EBOOT_ICON = $(ASSETS)/ICON0.PNG
 endif
-ifneq ($(wildcard ICON1.PMF),)
-PSP_EBOOT_ICON1 = ICON1.PMF
+ifneq ($(wildcard $(ASSETS)/ICON1.PMF),)
+PSP_EBOOT_ICON1 = $(ASSETS)/ICON1.PMF
 endif
-ifneq ($(wildcard PIC0.PNG),)
-PSP_EBOOT_PIC0 = PIC0.PNG
+ifneq ($(wildcard $(ASSETS)/PIC0.PNG),)
+PSP_EBOOT_PIC0 = $(ASSETS)/PIC0.PNG
 endif
-ifneq ($(wildcard PIC1.PNG),)
-PSP_EBOOT_PIC1 = PIC1.PNG
+ifneq ($(wildcard $(ASSETS)/PIC1.PNG),)
+PSP_EBOOT_PIC1 = $(ASSETS)/PIC1.PNG
 endif
-ifneq ($(wildcard SND0.AT3),)
-PSP_EBOOT_SND0 = SND0.AT3
+ifneq ($(wildcard $(ASSETS)/SND0.AT3),)
+PSP_EBOOT_SND0 = $(ASSETS)/SND0.AT3
 endif
 
 PSPSDK = $(shell psp-config --pspsdk-path)

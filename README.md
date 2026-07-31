@@ -112,6 +112,23 @@ If you genuinely rebuilt the server, select it in the list and press **SELECT**
 to forget the old key. That is deliberately not on the warning screen: a button
 next to an alarm gets pressed instead of read.
 
+## The artwork
+
+`assets/` holds what the XMB shows, packed into the `EBOOT.PBP` rather than
+copied beside it. Each is picked up when present and the build works without
+any of them.
+
+| | | |
+|---|---|---|
+| `ICON0.PNG` | 144×80 | the icon in the game list |
+| `ICON1.PMF` | 144×80 | an animation shown instead of the icon |
+| `PIC0.PNG` | 480×272 | drawn over the background |
+| `PIC1.PNG` | 480×272 | the background, while this is the highlighted item |
+| `SND0.AT3` | ATRAC3 | music, looped while it is highlighted |
+
+`SND0.AT3` has to be plain ATRAC3 rather than ATRAC3plus, which ffmpeg cannot
+produce — [atracdenc](https://github.com/dcherednik/atracdenc) can.
+
 ## Building
 
 Needs Docker or OrbStack; no local toolchain.
