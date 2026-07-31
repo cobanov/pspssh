@@ -125,6 +125,22 @@ void gfx_clear(unsigned int colour)
     }
 }
 
+void gfx_gu_clear(unsigned int colour)
+{
+    if (!started) {
+        return;
+    }
+    sceGuStart(GU_DIRECT, display_list);
+    sceGuClearColor(colour);
+    sceGuClearDepth(0);
+    sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
+    sceGuFinish();
+    /* Blocks until the engine is done, so anything the processor writes next —
+     * a backdrop, say — cannot be overtaken by the clear it was meant to
+     * follow. */
+    sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
+}
+
 void gfx_fill_cells(int col, int row, int cols, int rows, unsigned int colour)
 {
     int x, y;

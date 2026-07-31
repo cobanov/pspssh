@@ -210,6 +210,18 @@ static void draw_terminal(const host_entry *host, int blink)
              GFX_GREY, GFX_BLACK);
 }
 
+/* Drawn behind the on-screen keyboard while it is up.
+ *
+ * The host editor always had one of these; the terminal passed NULL, so its
+ * backdrop was black by construction — which is why a keyboard that failed to
+ * appear presented as an unexplained black screen there and would have been
+ * obvious anywhere else. Now the session stays visible behind the panel, which
+ * is both nicer to type against and self-diagnosing. */
+static void terminal_backdrop(void *ctx)
+{
+    draw_terminal((const host_entry *)ctx, 0);
+}
+
 /* Sends the whole of a short string, pumping until it is gone.
  *
  * pspssh_write returns 0 when the channel's send window is full, which right
@@ -292,8 +304,9 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
              * a shell and does not suit an editor, which the README says rather
              * than leaving people to find out. */
             typed[0] = '\0';
-            if (osk_prompt("", "", typed, sizeof(typed), OSK_TEXT,
-                           NULL, NULL) == OSK_ENTERED) {
+            if (osk_prompt("type a line for the shell", "",
+                           typed, sizeof(typed), OSK_TEXT,
+                           terminal_backdrop, (void *)host) == OSK_ENTERED) {
                 int len = (int)strlen(typed);
 
                 typed[len] = '\n';
