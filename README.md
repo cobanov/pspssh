@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="assets/PIC1.PNG" alt="pspssh" width="620">
+  <img src="assets/ICON0.PNG" alt="pspssh" width="360">
 </p>
-
-<h1 align="center">pspssh</h1>
 
 <p align="center">
   An SSH client for the PlayStation Portable that can actually talk to a
