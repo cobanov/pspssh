@@ -19,6 +19,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* First, and before wolfssh/ssh.h in particular. That header includes
+ * settings.h on one line and options.h two lines later, so the configuration
+ * arrives after settings.h has already made its derived decisions. Putting it
+ * here means every wolfSSL header in this file sees the same build the library
+ * was compiled as. */
+#include <wolfssl/options.h>
+
 #include <wolfssh/ssh.h>
 #include <wolfssh/error.h>
 #include <wolfssl/wolfcrypt/sha256.h>

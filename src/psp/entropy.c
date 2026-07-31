@@ -37,6 +37,16 @@
 
 #include <string.h>
 
+/* Before any other wolfSSL header, and the order is the point.
+ *
+ * settings.h only pulls options.h in when EXTERNAL_OPTS_OPENVPN is defined,
+ * which it is not — so without this line the headers describe a default build
+ * while libwolfssl.a was compiled with the sixty-odd macros in
+ * tools/build-toolchain.sh. The two views agree on wc_Sha256 today, which was
+ * measured rather than hoped; they agree by luck, and WOLFSSL_USE_ALIGN or the
+ * SP-math options are exactly the kind that would end that. A layout mismatch
+ * here is stack corruption on a device with no debugger. */
+#include <wolfssl/options.h>
 #include <wolfssl/wolfcrypt/sha256.h>
 
 /* Enough samples that even a pessimistic estimate of a bit or two each clears
