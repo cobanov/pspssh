@@ -40,7 +40,11 @@ typedef enum {
 
 /* Called once per frame while the keyboard is up, to paint what sits behind it.
  * The keyboard covers the lower half of the screen, so a form that keeps
- * drawing stays legible above it — and a black rectangle looks like a crash. */
+ * drawing stays legible above it — and a black rectangle looks like a crash.
+ *
+ * **Do not clear.** The screen has already been cleared when this is called,
+ * through the graphics engine, and clearing again is the same buffer written
+ * twice a frame with the second copy undoing the first. Paint only. */
 typedef void (*osk_backdrop_fn)(void *ctx);
 
 /* Puts the keyboard up and does not return until it is dismissed.

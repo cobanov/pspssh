@@ -39,9 +39,17 @@
 
 /* ------------------------------------------------------------------ frame -- */
 
+/* Whether ui_frame clears before drawing. Off only while the on-screen
+ * keyboard is up, which clears through the graphics engine before calling the
+ * backdrop — see osk.h. A second clear there is the same buffer written twice
+ * a frame, with the copy that matters going first. */
+static int frame_clears = 1;
+
 void ui_frame(const char *title, const char *legend)
 {
-    gfx_clear(GFX_BLACK);
+    if (frame_clears) {
+        gfx_clear(GFX_BLACK);
+    }
 
     gfx_fill_cells(0, 0, GFX_COLS, 1, GFX_ACCENT);
     gfx_printf(1, 0, GFX_WHITE, GFX_ACCENT, "%s", title);
@@ -213,6 +221,19 @@ static void draw_form(void *ctx)
     }
 }
 
+/* The same form, painted without clearing, for the keyboard to sit on top of.
+ *
+ * draw_form is called from two places that want opposite things: its own loop,
+ * which owns the frame and has to clear it, and the keyboard's loop, which has
+ * already cleared through the graphics engine. Wrapping it is how they stay one
+ * drawing routine rather than two that drift apart. */
+static void form_backdrop(void *ctx)
+{
+    frame_clears = 0;
+    draw_form(ctx);
+    frame_clears = 1;
+}
+
 /* A name for a host the user did not name, derived from its address.
  *
  * The first label rather than the first 23 characters: "pve" is a better row in
@@ -243,7 +264,7 @@ static osk_result ask(const char *prompt, const char *initial,
                       char *out, int out_len, osk_kind kind)
 {
     osk_result result = osk_prompt(prompt, initial, out, out_len, kind,
-                                   draw_form, NULL);
+                                   form_backdrop, NULL);
 
     if (result == OSK_UNAVAILABLE) {
         ui_message("the keyboard would not open", osk_failure(), GFX_RED);

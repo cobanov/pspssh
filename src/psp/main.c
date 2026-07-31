@@ -172,7 +172,10 @@ static const unsigned int palette[16] = {
 #define BELL_FRAMES 24
 static int bell_left;
 
-static void draw_terminal(const host_entry *host, int blink)
+/* `clear` is 0 when something else has already cleared the screen — the
+ * keyboard's loop does, through the graphics engine, and repeating it here
+ * would be the same buffer written twice a frame. */
+static void draw_terminal(const host_entry *host, int blink, int clear)
 {
     int row;
     int col;
@@ -182,7 +185,9 @@ static void draw_terminal(const host_entry *host, int blink)
         bar = GFX_RED;
     }
 
-    gfx_clear(GFX_BLACK);
+    if (clear) {
+        gfx_clear(GFX_BLACK);
+    }
 
     gfx_fill_cells(0, 0, GFX_COLS, 1, bar);
     gfx_printf(1, 0, GFX_WHITE, bar, "%s@%s", host->user, host->name);
@@ -230,7 +235,7 @@ static void draw_terminal(const host_entry *host, int blink)
  * is both nicer to type against and self-diagnosing. */
 static void terminal_backdrop(void *ctx)
 {
-    draw_terminal((const host_entry *)ctx, 0);
+    draw_terminal((const host_entry *)ctx, 0, 0);
 }
 
 /* Sends the whole of a short string, pumping until it is gone.
@@ -304,7 +309,7 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
             bell_left = BELL_FRAMES;
         }
 
-        draw_terminal(host, (frames / 20) % 2 == 0);
+        draw_terminal(host, (frames / 20) % 2 == 0, 1);
         gfx_flip();
         frames++;
         if (bell_left > 0) {
