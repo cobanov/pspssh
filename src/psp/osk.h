@@ -15,6 +15,14 @@
 #ifndef PSPSSH_OSK_H
 #define PSPSSH_OSK_H
 
+/* The longest string the keyboard will ever hand back, terminator aside.
+ *
+ * Stated here because callers were sizing their buffers by guesswork. A 512
+ * byte one implies a 511 character line and gets 255, which is not wrong so
+ * much as misleading — and a buffer whose size means nothing is one nobody can
+ * reason about. */
+#define OSK_MAX_TEXT 255
+
 /* What the keyboard should offer. The panel can always be switched with SELECT;
  * this only decides where it starts, which saves a press on the common case. */
 typedef enum {
