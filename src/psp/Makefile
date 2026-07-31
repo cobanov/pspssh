@@ -52,7 +52,12 @@ PSP_EBOOT_TITLE = pspssh
 # the banner and the version in the git tag cannot disagree; tools/release.sh
 # already refuses to tag a mismatch between the last two.
 PSPSSH_VERSION := $(shell sed -n 's/^\#define PSPSSH_VERSION "\(.*\)"$$/\1/p' ../core/pspssh.h)
-SFOFLAGS = -s APP_VER=$(PSPSSH_VERSION) -s DISC_VERSION=$(PSPSSH_VERSION)
+
+# PARAM.SFO is not built here. tools/build-psp.sh writes it before invoking
+# make, using tools/make-sfo.py — because mksfoex does not sort the key table
+# and the format says it is ordered, and because the toolchain image has no
+# python3 to run the replacement inside. make's rule for PARAM.SFO has no
+# prerequisites, so a file already present is left alone.
 
 # What the XMB shows for this application, packed into the EBOOT itself rather
 # than copied to the card beside it.
