@@ -16,7 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../../third_party/font8x8_basic.h"
+#include "font6x12.h"
 
 #define SCR_WIDTH  480
 #define SCR_HEIGHT 272
@@ -173,33 +173,36 @@ void gfx_fill_cells(int col, int row, int cols, int rows, unsigned int colour)
 void gfx_glyph(int col, int row, unsigned char ch,
                unsigned int fg, unsigned int bg)
 {
-    const char *glyph;
+    const unsigned char *glyph;
     int y;
 
     if (!started || col < 0 || row < 0 || col >= GFX_COLS || row >= GFX_ROWS) {
         return;
     }
 
-    /* Anything outside printable ASCII is drawn as a space. The font only
-     * covers 0x00..0x7f, and the control-code end of it is a set of shapes
-     * nobody meant to display — a stray 0x07 should not put a smiley in the
-     * middle of a hostname. */
-    if (ch < 0x20 || ch > 0x7e) {
+    /* Anything outside printable ASCII is drawn as a space. The font covers
+     * nothing else, and drawing a control code as whatever shape happened to
+     * sit at that offset is how a stray 0x07 puts a smiley in the middle of a
+     * hostname. */
+    if (ch < FONT_FIRST || ch > FONT_LAST) {
         ch = ' ';
     }
-    glyph = font8x8_basic[ch];
+    glyph = font_spleen_6x12[ch - FONT_FIRST];
 
     for (y = 0; y < GFX_CELL_H; y++) {
         unsigned int *line = draw_buffer
                              + (unsigned int)(row * GFX_CELL_H + y) * BUF_WIDTH
                              + (unsigned int)(col * GFX_CELL_W);
-        unsigned char bits = (unsigned char)glyph[y];
+        unsigned char bits = glyph[y];
         int x;
 
-        /* Bit 0 is the leftmost pixel in this font — verified against the
-         * glyph for 'F', which is mirrored the other way round. */
+        /* The high bit is the leftmost pixel, which is the BDF convention and
+         * the opposite way round from the 8x8 font this replaced. Getting it
+         * backwards mirrors every glyph, which on a device you cannot debug
+         * looks like broken hardware rather than a shift in the wrong
+         * direction. */
         for (x = 0; x < GFX_CELL_W; x++) {
-            line[x] = (bits & (1u << x)) ? fg : bg;
+            line[x] = (bits & (0x80u >> x)) ? fg : bg;
         }
     }
 }

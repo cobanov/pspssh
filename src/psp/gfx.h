@@ -29,13 +29,21 @@
 #ifndef PSPSSH_GFX_H
 #define PSPSSH_GFX_H
 
-/* An 8x8 font on a 480x272 screen. 80 columns would need a six-pixel font and
- * is a separate question; this is what the debug screen gave us, so moving to
- * it regresses nothing. */
-#define GFX_CELL_W 8
-#define GFX_CELL_H 8
-#define GFX_COLS   60
-#define GFX_ROWS   34
+/* Spleen 6x12 on a 480x272 screen, which is exactly 80 columns.
+ *
+ * Eighty is not a round number anyone picked for looks — it is what a very
+ * large amount of terminal output is formatted to, and at sixty the columns of
+ * `ls -l`, `ps` and `git log --oneline` wrapped and became unreadable. The cost
+ * is height: 272 pixels give 22 rows rather than 34, and eight pixels are left
+ * unused at the bottom because 272 does not divide by twelve.
+ *
+ * The font it replaced was the classic 8x8 IBM one, which is legible and looks
+ * every one of its forty years. Spleen is drawn for terminals and reads better
+ * at this size. */
+#define GFX_CELL_W 6
+#define GFX_CELL_H 12
+#define GFX_COLS   80
+#define GFX_ROWS   22
 
 /* The framebuffer is GU_PSM_8888, which is ABGR in memory — so the literals
  * read backwards from the usual RGB and are worth constructing rather than
