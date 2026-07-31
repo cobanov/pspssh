@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/thumbnail.webp" alt="pspssh" width="760">
+  <img src="assets/thumbnail.webp" alt="pspssh" width="560">
 </p>
 
 <p align="center">
