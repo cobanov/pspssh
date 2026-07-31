@@ -438,7 +438,7 @@ int main(void)
     pspDebugScreenInit();
     setup_callbacks();
 
-    printf("pspssh\n\n");
+    printf("pspssh %s\n\n", PSPSSH_VERSION);
 
     if (!load_settings(&config)) {
         printf("  no usable %s next to the binary.\n\n", CONFIG_PATH);

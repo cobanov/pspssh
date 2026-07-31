@@ -237,7 +237,7 @@ int main(int argc, char **argv)
     char err[PSPSSH_ERROR_LEN];
     int fd;
 
-    printf("==> %s@%s:%s\n", user, host, port);
+    printf("==> pspssh %s  %s@%s:%s\n", PSPSSH_VERSION, user, host, port);
 
     if (pspssh_init() != 0) {
         printf("  FAIL  the library initialises\n");
