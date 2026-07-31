@@ -214,22 +214,25 @@ osk_result osk_prompt(const char *prompt, const char *initial,
     while (!finished) {
         int status;
 
-        /* A backdrop paints every pixel itself, so clearing first would be the
-         * same buffer written twice a frame — once by the graphics engine and
-         * once by the processor, the second undoing the first.
+        /* Clear through the engine, then paint over it with the processor.
          *
-         * The engine clear costs more than the wasted writes. gfx_gu_clear ends
-         * with sceGuSync, which waits for the whole queue, and the keyboard's
-         * own rendering is in that queue. Every frame we asked the engine to
-         * clear, we then blocked until the keyboard had finished drawing — so
-         * the loop ran at the keyboard's pace instead of the display's, and a
-         * panel that takes a moment to appear took several seconds.
+         * The sceGuSync inside gfx_gu_clear is not the ceremony it looks like.
+         * It keeps the engine in step with this loop, and without it the
+         * keyboard's drawing lands in whichever buffer happens to be current
+         * when the engine gets to it rather than the one it was queued for —
+         * which is a screen alternating between the backdrop and the panel
+         * several times a second.
          *
-         * With a backdrop there is no engine work here at all. */
+         * It was removed once on the theory that waiting for the queue was what
+         * made the keyboard slow to appear. It was not; the keyboard is slow
+         * because the system loads a font when it starts. All that removing the
+         * wait achieved was the flicker.
+         *
+         * The backdrop does not clear: this already has, and doing it twice was
+         * a hundred and forty thousand pointless writes a frame. */
+        gfx_gu_clear(GFX_BLACK);
         if (backdrop != NULL) {
             backdrop(backdrop_ctx);
-        } else {
-            gfx_gu_clear(GFX_BLACK);
         }
 
         status = sceUtilityOskGetStatus();
