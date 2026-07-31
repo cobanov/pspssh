@@ -35,11 +35,34 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     exit 1
 fi
 
+docker run --rm --platform linux/amd64 -v "$PWD:/src" -w /src "$IMAGE" sh -lc '
+    export PATH="$PSPDEV/bin:$PATH"
+    cd src/psp && make clean
+' >/dev/null 2>&1 || true
+
+# PARAM.SFO is written here rather than inside the toolchain image, which has no
+# python3 — and mksfoex, which it does have, emits an unsorted key table. See
+# tools/make-sfo.py. It goes between the clean and the build because make's rule
+# for it has no prerequisites: present, and make leaves it alone.
+#
+# The version goes in the title as well as in APP_VER. APP_VER is the field the
+# information panel is meant to read, and on this console it stays blank; every
+# official title puts something shaped like "01.00" there, so a "1.3.4" may
+# simply not be parsed. The title is proven to display, and on an application
+# flashed by hand the version is worth having somewhere that certainly works.
+echo "==> writing PARAM.SFO"
+VERSION="$(sed -n 's/^#define PSPSSH_VERSION "\(.*\)"$/\1/p' src/core/pspssh.h)"
+[ -n "$VERSION" ] || { echo "no PSPSSH_VERSION in src/core/pspssh.h" >&2; exit 1; }
+tools/make-sfo.py \
+    APP_VER="$VERSION" DISC_VERSION="$VERSION" \
+    CATEGORY=MG DISC_ID=UCJS10041 PSP_SYSTEM_VER=1.00 \
+    BOOTABLE=:1 REGION=:32768 PARENTAL_LEVEL=:1 MEMSIZE=:1 \
+    "pspssh $VERSION" src/psp/PARAM.SFO
+
 echo "==> compiling for PSP"
 docker run --rm --platform linux/amd64 -v "$PWD:/src" -w /src "$IMAGE" sh -lc '
     export PATH="$PSPDEV/bin:$PATH"
     cd src/psp
-    make clean >/dev/null 2>&1 || true
     make
 '
 
