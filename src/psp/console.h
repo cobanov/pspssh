@@ -23,9 +23,6 @@
 /* Empties the grid and puts the cursor back at the top. */
 void console_reset(void);
 
-/* The colour subsequent text is written in. Persists until changed. */
-void console_colour(unsigned int fg);
-
 /* Appends at the cursor, wrapping at the right edge and scrolling at the
  * bottom. Understands '\n'; everything else is a glyph.
  *
@@ -34,9 +31,5 @@ void console_colour(unsigned int fg);
  * call, which is the right trade for a log that prints tens of lines and the
  * wrong one for a terminal — which is why the terminal does not use this. */
 void console_printf(const char *fmt, ...);
-
-/* Repaints the grid into the current draw buffer without presenting it, for a
- * caller drawing something else on top in the same frame. */
-void console_render(void);
 
 #endif /* PSPSSH_CONSOLE_H */

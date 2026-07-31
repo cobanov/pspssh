@@ -33,18 +33,6 @@
 
 static int stack_started;
 static int connected;
-static int joined_profile;
-
-int net_is_up(void)
-{
-    return connected;
-}
-
-int net_profile(void)
-{
-    return joined_profile;
-}
-
 /* Which saved connections exist, and what they are called.
  *
  * Guessing a profile number was a mistake worth undoing rather than papering
@@ -194,7 +182,6 @@ int net_start(int preferred)
      * host should cost a few seconds, not an evening. */
     if (preferred > 0 && try_profile(preferred)) {
         connected = 1;
-        joined_profile = preferred;
         return 1;
     }
     for (i = 0; i < count && !pad_exit_requested(); i++) {
@@ -203,7 +190,6 @@ int net_start(int preferred)
         }
         if (try_profile(available[i])) {
             connected = 1;
-            joined_profile = available[i];
             if (preferred > 0) {
                 console_printf("  (set this host's profile to %d to go straight"
                                " there)\n", available[i]);

@@ -19,6 +19,7 @@
 #include "knownhosts.h"
 #include "osk.h"
 #include "pad.h"
+#include "wipe.h"
 
 #include "../core/pspssh.h"
 
@@ -47,8 +48,16 @@ void ui_frame(const char *title, const char *legend)
     /* The build and whose it is, on every screen. On a device flashed by hand
      * the version is the answer to "did the new one copy across?", and it is
      * only useful where it is already being looked at. */
-    gfx_printf(GFX_COLS - 26, 0, GFX_WHITE, GFX_ACCENT,
-               "v%s  %s", PSPSSH_VERSION, PSPSSH_AUTHOR);
+    /* Right-aligned by measurement rather than by a number that was correct
+     * when the byline was a different length. */
+    {
+        char stamp[40];
+        int at;
+
+        snprintf(stamp, sizeof(stamp), "v%s  %s", PSPSSH_VERSION, PSPSSH_AUTHOR);
+        at = GFX_COLS - 1 - (int)strlen(stamp);
+        gfx_puts(at < 0 ? 0 : at, 0, stamp, GFX_WHITE, GFX_ACCENT);
+    }
 
     if (legend != NULL) {
         gfx_fill_cells(0, FOOTER_ROW, GFX_COLS, 1, GFX_BLACK);
@@ -338,6 +347,10 @@ static int edit_host(int index)
         gfx_flip();
 
         if (pad_exit_requested()) {
+            /* The system is closing us. This path forgot the password the form
+             * was holding, which is the one exit nobody exercises by hand and
+             * therefore the one that stayed wrong. */
+            wipe_bytes(&form, sizeof(form));
             return 0;
         }
         pressed = pad_pressed();
@@ -371,10 +384,10 @@ static int edit_host(int index)
                 ui_message("it could not be saved", hosts_error(), GFX_RED);
                 continue;
             }
-            memset(&form, 0, sizeof(form));
+            wipe_bytes(&form, sizeof(form));
             return 1;
         } else if ((pressed & PSP_CTRL_CIRCLE) != 0) {
-            memset(&form, 0, sizeof(form));
+            wipe_bytes(&form, sizeof(form));
             wait_for_release();
             return 0;
         }
