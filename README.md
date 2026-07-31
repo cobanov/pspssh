@@ -17,7 +17,10 @@ Target hardware is a **PSP Go (N1000)** on custom firmware. 480×272 gives an
 
 ## Status
 
-There is an installable build. It has not yet been run on hardware. [docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack and
+**It works on hardware.** A PSP Go on custom firmware brings up Wi-Fi, connects,
+completes a `curve25519-sha256` key exchange against a real OpenSSH server,
+verifies its `ssh-ed25519` host key, authenticates, and runs a command in a
+shell. [docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack and
 is worth reading before contributing.
 
 - [x] Toolchain verified: `pspdev/pspdev` builds, networking libraries present
@@ -28,7 +31,7 @@ is worth reading before contributing.
       ssh-ed25519, aes256-ctr, a pty and a shell — `tools/test-host.sh`
 - [x] An installable `EBOOT.PBP` that brings up Wi-Fi, connects, and runs a
       command over a modern SSH session — `tools/build-psp.sh`
-- [ ] Confirmed on real hardware
+- [x] **Confirmed on a PSP Go**: authenticated, shell opened, output returned
 - [ ] A terminal grid instead of the debug screen ([#4](https://github.com/cobanov/pspssh/issues/4))
 - [ ] Input: the on-screen keyboard, and whether a Bluetooth one can be paired ([#2](https://github.com/cobanov/pspssh/issues/2))
 

@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """A listener that shows exactly what a client says, and when.
 
-    tools/wire-probe.py [port]        # defaults to 2223
+    tools/wire-probe.py <port>                  # answer as a stub server
+    tools/wire-probe.py <port> <host>:<port>    # forward to a real one, logging
+
+With a target it is a proxy: every byte in both directions is dumped with a
+timestamp while the real server does the talking. That is the mode worth using
+once a client gets past its own identification string, because it shows the
+whole handshake rather than the first half of it.
 
 Point the PSP at this instead of a real server and the whole conversation
 becomes visible: whether it connects, whether it sends its identification
@@ -24,6 +30,10 @@ import threading
 import time
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 2223
+TARGET = None
+if len(sys.argv) > 2:
+    host, _, port = sys.argv[2].rpartition(":")
+    TARGET = (host, int(port))
 BANNER = b"SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u10\r\n"
 
 
@@ -38,6 +48,49 @@ def show(direction, data, started):
     if len(data) > 128:
         print(f"            ... {len(data) - 128} more")
     sys.stdout.flush()
+
+
+def proxy(conn, peer):
+    """Forward to the real server, showing both sides as it goes."""
+    started = time.monotonic()
+    print(f"\n=== connection from {peer[0]}:{peer[1]} -> {TARGET[0]}:{TARGET[1]}")
+    sys.stdout.flush()
+
+    try:
+        upstream = socket.create_connection(TARGET, timeout=10)
+    except Exception as e:
+        print(f"  cannot reach {TARGET[0]}:{TARGET[1]} — {e}")
+        conn.close()
+        return
+
+    done = threading.Event()
+
+    def pump(src, dst, arrow):
+        try:
+            while not done.is_set():
+                data = src.recv(4096)
+                if not data:
+                    break
+                show(arrow, data, started)
+                dst.sendall(data)
+        except Exception:
+            pass
+        finally:
+            done.set()
+
+    a = threading.Thread(target=pump, args=(conn, upstream, "client -->"), daemon=True)
+    b = threading.Thread(target=pump, args=(upstream, conn, "server <--"), daemon=True)
+    a.start()
+    b.start()
+    done.wait()
+    time.sleep(0.2)
+    print(f"  [{time.monotonic() - started:7.3f}s] finished")
+    sys.stdout.flush()
+    for s_ in (conn, upstream):
+        try:
+            s_.close()
+        except Exception:
+            pass
 
 
 def serve(conn, peer):
@@ -78,12 +131,16 @@ def main():
     server.bind(("0.0.0.0", PORT))
     server.listen(8)
     print(f"listening on 0.0.0.0:{PORT} — point pspssh here")
-    print("(host=<this machine's LAN address>, port=%d)" % PORT)
+    if TARGET:
+        print(f"forwarding to {TARGET[0]}:{TARGET[1]}, logging both directions")
+    else:
+        print("answering as a stub server (no target given)")
     sys.stdout.flush()
 
     while True:
         conn, peer = server.accept()
-        threading.Thread(target=serve, args=(conn, peer), daemon=True).start()
+        handler = proxy if TARGET else serve
+        threading.Thread(target=handler, args=(conn, peer), daemon=True).start()
 
 
 if __name__ == "__main__":

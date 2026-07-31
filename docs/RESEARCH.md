@@ -318,3 +318,62 @@ is often zero until the peer's first `WINDOW_ADJUST` arrives, so a client's very
 first keystroke hits it. Retrying the write alone spins forever, because the
 window only opens when incoming packets are processed. `pspssh_write` pumps once
 and reports "try again", so callers do not each have to know this.
+
+## 8. It works, and what the wire showed
+
+A PSP Go on 6.61 PRO-C completed a real session. The captured handshake, from
+`tools/wire-probe.py` sitting between the console and the server:
+
+```
+192.168.8.120:53121 -> sshd
+  [0.109s] client --> SSH-2.0-wolfSSHv1.5.0
+  [0.112s] server <-- SSH-2.0-OpenSSH_9.2p1 Debian
+  [0.116s] client --> KEXINIT: curve25519-sha256, ssh-ed25519,
+                                aes256-ctr, hmac-sha2-256
+  ...      unreadable bytes in both directions
+  [10.685s] finished
+```
+
+and the server's own account of it:
+
+```
+Accepted password for bb
+Starting session: shell on pts/0 for bb
+Transferred: sent 3192, received 584 bytes
+```
+
+Two details in that capture are worth keeping.
+
+**The server offered 1256 bytes of algorithms, including post-quantum
+`sntrup761x25519-sha512`. The console offered 168 — one name per slot.** The
+pinning holds on real hardware: there is nothing to fall back to, so a weak
+session cannot be negotiated even against a server that would happily allow one.
+
+**Traffic becomes unreadable partway through, and that is the success signal.**
+Everything after NEWKEYS is encrypted, which is why a proxy that logs bytes can
+prove the handshake completed without being able to read a word of the session.
+
+### Getting there took four platform faults, and none were protocol bugs
+
+Every one of them was invisible from the host, which is the argument for the
+split doing its job — the protocol was right the whole time.
+
+1. **No random source.** `wc_InitRng` returned -199 because a PSP has neither
+   `/dev/urandom` nor a hardware RNG. Fixed by §7's jitter collector.
+2. **`SO_NONBLOCK` is defined as `0`.** The call to make the socket
+   non-blocking set option zero and changed nothing, so a quiet socket meant a
+   `recv` that never returned. Readiness comes from `select()` now.
+3. **The handshake loop never yielded**, which on a cooperative scheduler can
+   starve the thread delivering the bytes it waits for.
+4. **The Wi-Fi diagnosis reported the final state rather than the furthest
+   reached**, so a connection that got to state 2 and fell back to 0 was
+   described as "never started" — sending the search entirely the wrong way.
+
+### The tool that ended the guessing
+
+The project's test sshd runs in a container, and Docker rewrites every client
+address to the bridge — so its log could not tell a PSP from a laptop, and
+"connection closed before identification" could have been either.
+`tools/wire-probe.py` listens on the host instead, shows the real peer, and
+dumps every byte with a timestamp. Its proxy mode forwards to the real server
+while logging, which is what produced the capture above.
