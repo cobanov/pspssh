@@ -38,10 +38,21 @@ if [ "${1:-}" = "--check" ]; then
     echo "  header  $version"
     echo "  tag     ${tag:-none}"
     [ -n "$version" ] || fail "$HEADER has no PSPSSH_VERSION"
-    if [ -n "$tag" ] && [ "v$version" != "$tag" ]; then
-        fail "the header says $version and the last tag is $tag"
+
+    # The invariant is "a tag never names a version different from the header at
+    # that commit" — not "the header always equals the last tag". Between
+    # releases the header is deliberately ahead, which is what a version bump
+    # is, and failing on that would make the check something to work around.
+    #
+    # So it is only decidable when this commit is itself tagged.
+    if exact="$(git describe --tags --exact-match 2>/dev/null)"; then
+        if [ "v$version" != "$exact" ]; then
+            fail "this commit is tagged $exact and the header says $version"
+        fi
+        echo "  this commit is $exact, and the header agrees"
+    elif [ -n "$tag" ]; then
+        echo "  ahead of $tag, which is what an unreleased version bump is"
     fi
-    echo "  they agree"
     exit 0
 fi
 
