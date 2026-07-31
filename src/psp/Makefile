@@ -4,7 +4,7 @@
 # local PSP toolchain is needed.
 
 TARGET = pspssh
-OBJS = main.o gfx.o console.o pad.o osk.o hosts.o ui.o net.o entropy.o \
+OBJS = main.o gfx.o console.o pad.o osk.o hosts.o term.o ui.o net.o entropy.o \
        ../core/pspssh.o
 
 INCDIR =
