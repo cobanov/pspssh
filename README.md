@@ -42,13 +42,15 @@ Add your servers on the device, pick one, get a shell.
   scroll regions — what a shell sends, drawn as a shell means it, at the width
   it was formatted for.
 - **Passwords are optional.** Leave one out and it is asked for at connect
-  time, then forgotten.
+  time, then wiped when the session ends.
 
 ## Status
 
-**It works on hardware.** A PSP Go on custom firmware brings up Wi-Fi, connects,
-completes a `curve25519-sha256` key exchange against a real OpenSSH server,
-verifies its `ssh-ed25519` host key, authenticates, and runs a shell.
+**Finished and confirmed on hardware.** A PSP Go on custom firmware brings up
+Wi-Fi, connects, completes a `curve25519-sha256` key exchange against a real
+OpenSSH server, verifies its `ssh-ed25519` host key, authenticates, opens a
+shell, and is driven from the console with nothing else in the room.
+
 [docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack and is worth
 reading before contributing.
 
@@ -61,9 +63,10 @@ reading before contributing.
 - [x] Hosts added, edited and deleted on the device
 - [x] Typing, with the on-screen keyboard
 - [x] Host keys remembered, and a changed one refused
-- [ ] Public key authentication
-- [ ] Whether a Bluetooth keyboard can be paired
-      ([#2](https://github.com/cobanov/pspssh/issues/2))
+- [x] An 80-column terminal with colour, and a visible bell
+- [ ] Public key authentication — the one thing a password client is missing
+- [ ] Menu music, which never played ([#51](https://github.com/cobanov/pspssh/issues/51)
+      records everything ruled out)
 
 ## Using it
 
@@ -77,6 +80,9 @@ reading before contributing.
 | **SELECT** | forget this server's remembered key |
 | **○** | quit |
 
+A host with no name takes the first label of its address, so
+`pve.internal.example.org` becomes `pve` rather than something cut mid-domain.
+
 ### The terminal
 
 | | |
@@ -88,6 +94,9 @@ reading before contributing.
 | **d-pad** | arrow keys — so shell history works |
 | **SELECT** / **START** | Ctrl-D / Tab |
 | **L** / **R** | Escape / Ctrl-L |
+
+The title bar flashes red when the far side rings the bell, because a console
+whose volume is down needs it to be visible or it is not a bell.
 
 The on-screen keyboard is a modal dialog, so typing is **line at a time**: you
 compose a line and it is sent when you confirm. That suits `sh`, `ls`, `git` and
@@ -143,7 +152,14 @@ tools/build-toolchain.sh     # once: cross-compiles wolfSSL and wolfSSH
 tools/build-psp.sh           # -> build/psp/EBOOT.PBP
 tools/test-offline.sh        # the parsers and the storage, no hardware
 tools/test-host.sh           # the session, against a real OpenSSH, from here
+tools/release.sh --check     # the version invariants
+tools/release.sh 2.0.1       # tag, build from a fresh clone, publish
 ```
+
+`release.sh` builds from a **fresh clone** rather than the working tree, because
+v1.1.0 shipped unbuildable — the font every glyph comes from was gitignored, and
+nobody noticed because the file was sitting in the tree it had been written in.
+It also refuses to tag anything whose `PSPSSH_VERSION` disagrees with the tag.
 
 The toolchain build takes a while — the pspdev image is amd64 and runs emulated
 on Apple Silicon — but it only has to happen once.
@@ -196,10 +212,43 @@ a laptop. Encodings can be proved with test vectors; a key exchange either
 convinces OpenSSH or it does not, and a games console with no debugger is a bad
 place to find that out.
 
-The same principle applies inside the front end. `hosts.c`, `knownhosts.c` and
-`term.c` have no hardware in them either, so 106 assertions run on a laptop —
-the storage layer, the host key check, and the escape-sequence parser. What is
-left needing a PSP is a screen, a radio and a system keyboard.
+The same principle applies inside the front end. Four of its modules have no
+hardware in them, so **122 assertions run on a laptop**:
+
+| | | |
+|---|---|---|
+| `hosts.c` | 35 | round trips, refusals, the legacy import, an interrupted save |
+| `knownhosts.c` | 28 | matching, not matching, not matching a *prefix*, every way a file could load less than it claims |
+| `term.c` | 43 | cursor addressing, erase modes, scroll regions, escape sequences split across reads, hostile parameters |
+| `console.c` | 16 | wrapping, scrolling, tabs, a call larger than its own buffer |
+
+Each of them guards a failure that is miserable to diagnose on a device with no
+console: losing somebody's saved servers, a host key check that quietly stops
+checking, "the screen looks a bit odd sometimes", and a boot log that corrupts
+the diagnosis of every other bug.
+
+`gfx` is stubbed for the console tests, so those assert on what reaches the
+screen rather than on what `console.c` believed it asked for.
+
+What genuinely needs a PSP is a screen, a radio and a system keyboard.
+
+## The modules
+
+```
+src/core     the SSH session — no PSP headers, builds for the host
+src/psp
+  gfx        a character grid on the 480x272 panel, drawn through the GE
+  console    a scrolling log on that grid
+  term       a screen buffer and the escape-sequence parser that fills it
+  pad        buttons, as presses rather than as held state
+  osk        the system keyboard
+  cardfile   small files read whole or refused, written atomically
+  hosts      the saved servers
+  knownhosts remembered host keys
+  ui         the list, the editor and the dialogs
+  net        the radio, the resolver and the socket
+  entropy    a jitter-based seed, because the console has no random source
+```
 
 ## Licence
 
