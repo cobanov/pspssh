@@ -124,12 +124,15 @@ any of them.
 | `ICON1.PMF` | 144×80 | an animation shown instead of the icon |
 | `PIC0.PNG` | 480×272 | drawn over the background |
 | `PIC1.PNG` | 480×272 | the background, while this is the highlighted item |
-| `SND0.AT3` | ATRAC3 | music, while it is highlighted — see [#51](https://github.com/cobanov/pspssh/issues/51) |
+| `SND0.AT3` | ATRAC3 | music, while it is highlighted |
 
-There is no `SND0.AT3` here. Several conformant ones were tried and none of them
-played; [#51](https://github.com/cobanov/pspssh/issues/51) records what was
-established so the next attempt does not start from nothing. Drop a file in and
-the build will pick it up.
+`SND0.AT3` must be plain ATRAC3 rather than ATRAC3plus, 44100 Hz, at exactly
+66 or 132 kbps, no longer than 25 seconds, and under 500 KB — the last two
+together with `ICON1.PMF` if there is one. `tools/add-at3-loop.py` gives it the
+whole-file loop that Sony's encoder writes and
+[atracdenc](https://github.com/dcherednik/atracdenc) does not.
+[#51](https://github.com/cobanov/pspssh/issues/51) records how each of those was
+established.
 
 ## Building
 
