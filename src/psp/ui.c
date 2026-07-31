@@ -237,11 +237,7 @@ static osk_result ask(const char *prompt, const char *initial,
                                    draw_form, NULL);
 
     if (result == OSK_UNAVAILABLE) {
-        char detail[64];
-
-        snprintf(detail, sizeof(detail),
-                 "sceUtilityOskInitStart gave 0x%08x", osk_start_error());
-        ui_message("the keyboard would not open", detail, GFX_RED);
+        ui_message("the keyboard would not open", osk_failure(), GFX_RED);
     }
     return result;
 }
@@ -397,13 +393,7 @@ int ui_ask_password(const host_entry *entry, char *out, int out_len)
     wait_for_release();
     if (osk_prompt(prompt, "", out, out_len, OSK_TEXT, NULL, NULL)
             != OSK_ENTERED) {
-        if (osk_start_error() != 0) {
-            char detail[64];
-
-            snprintf(detail, sizeof(detail),
-                     "sceUtilityOskInitStart gave 0x%08x", osk_start_error());
-            ui_message("the keyboard would not open", detail, GFX_RED);
-        }
+        ui_message("the keyboard would not open", osk_failure(), GFX_RED);
         return 0;
     }
     return out[0] != '\0';

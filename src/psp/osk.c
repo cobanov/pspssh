@@ -16,6 +16,7 @@
 #include <pspdisplay.h>
 #include <psputility.h>
 
+#include <stdio.h>
 #include <string.h>
 
 /* Long enough for a password or a shell command line. The panel itself is
@@ -79,13 +80,41 @@ static int input_type_for(osk_kind kind)
     return PSP_UTILITY_OSK_INPUTTYPE_ALL;
 }
 
-/* Why the keyboard would not start, for showing on screen. 0 when it did. */
-static int start_error;
+/* Why OSK_UNAVAILABLE came back, in words, for showing on screen.
+ *
+ * It used to be the code from sceUtilityOskInitStart, which was fine until the
+ * keyboard failed somewhere else and the screen reported "sceUtilityOskInitStart
+ * gave 0x00000000" — naming a function that had succeeded, with the code for
+ * success. A diagnostic that points at the wrong thing is worse than none: it
+ * sends whoever reads it to the wrong place. */
+static char failure[80];
 
-int osk_start_error(void)
+const char *osk_failure(void)
 {
-    return start_error;
+    return failure[0] != '\0' ? failure : "no failure";
 }
+
+/* ## The state constants are not the ones in this module's own header
+ *
+ * psputility_osk.h defines SceUtilityOskState — NONE, INITING, INITED, VISIBLE,
+ * QUIT, FINISHED — and sceUtilityOskGetStatus does not return those. Its own
+ * documentation says "See ::pspUtilityDialogState", the SDK's OSK sample
+ * switches on PSP_UTILITY_DIALOG_*, and the note on sceUtilityOskShutdownStart
+ * says to poll "until it returns PSP_UTILITY_DIALOG_NONE".
+ *
+ * The generic enum has one fewer state, so everything from VISIBLE onward is
+ * off by one:
+ *
+ *     value   really means     SceUtilityOskState calls it
+ *     2       VISIBLE          INITED
+ *     3       QUIT             VISIBLE
+ *     4       FINISHED         QUIT
+ *
+ * Reading a live keyboard as INITED meant sceUtilityOskUpdate was never called
+ * while it was up. It still appeared — it draws on its own threads — but was
+ * never refreshed, so it was slow, and the five-second timeout below eventually
+ * tore it down. That is the whole of the bug this comment is here to prevent
+ * somebody helpfully reintroducing. */
 
 /* Puts down a dialog somebody else left standing.
  *
@@ -98,11 +127,11 @@ static void drain_any_leftover(void)
 {
     int spins = 0;
 
-    if (sceUtilityOskGetStatus() == PSP_UTILITY_OSK_DIALOG_NONE) {
+    if (sceUtilityOskGetStatus() == PSP_UTILITY_DIALOG_NONE) {
         return;
     }
     sceUtilityOskShutdownStart();
-    while (sceUtilityOskGetStatus() != PSP_UTILITY_OSK_DIALOG_NONE
+    while (sceUtilityOskGetStatus() != PSP_UTILITY_DIALOG_NONE
             && spins++ < 300) {
         sceUtilityOskUpdate(1);
         sceDisplayWaitVblankStart();
@@ -165,15 +194,20 @@ osk_result osk_prompt(const char *prompt, const char *initial,
     params.data = &data;
 
     drain_any_leftover();
+    failure[0] = '\0';
 
-    start_error = sceUtilityOskInitStart(&params);
-    if (start_error < 0) {
-        /* Handed back rather than swallowed. A keyboard that refuses to start
-         * and a button that does nothing look identical from the outside, and
-         * this code is the whole of the difference. */
-        return OSK_UNAVAILABLE;
+    {
+        int started_ok = sceUtilityOskInitStart(&params);
+
+        if (started_ok < 0) {
+            /* Said rather than swallowed. A keyboard that refuses to start and
+             * a button that does nothing look identical from the outside, and
+             * this line is the whole of the difference. */
+            snprintf(failure, sizeof(failure),
+                     "sceUtilityOskInitStart gave 0x%08x", started_ok);
+            return OSK_UNAVAILABLE;
+        }
     }
-    start_error = 0;
 
     /* Frames spent waiting for the dialog to appear. Bounded, because looping
      * on a blank screen forever is the one outcome worse than saying no. */
@@ -194,20 +228,20 @@ osk_result osk_prompt(const char *prompt, const char *initial,
 
         status = sceUtilityOskGetStatus();
         switch (status) {
-        case PSP_UTILITY_OSK_DIALOG_VISIBLE:
+        case PSP_UTILITY_DIALOG_VISIBLE:
             appeared = 1;
             sceUtilityOskUpdate(1);
             break;
 
-        case PSP_UTILITY_OSK_DIALOG_QUIT:
+        case PSP_UTILITY_DIALOG_QUIT:
             sceUtilityOskShutdownStart();
             break;
 
-        case PSP_UTILITY_OSK_DIALOG_FINISHED:
+        case PSP_UTILITY_DIALOG_FINISHED:
             finished = 1;
             break;
 
-        case PSP_UTILITY_OSK_DIALOG_NONE:
+        case PSP_UTILITY_DIALOG_NONE:
             /* "No dialog is active" is true before it has finished starting as
              * well as after it has shut down, and treating the two the same
              * ended this loop on its first frame — reporting a cancellation the
@@ -219,7 +253,7 @@ osk_result osk_prompt(const char *prompt, const char *initial,
             break;
 
         default:
-            /* INITING and INITED: keep drawing and wait. */
+            /* INIT: keep drawing and wait. */
             break;
         }
 
@@ -229,8 +263,10 @@ osk_result osk_prompt(const char *prompt, const char *initial,
             /* Five seconds. Something is wrong and the person holding the
              * console should be told rather than left looking at a blank
              * screen with no way back. */
+            snprintf(failure, sizeof(failure),
+                     "it started, then never became visible");
             sceUtilityOskShutdownStart();
-            while (sceUtilityOskGetStatus() != PSP_UTILITY_OSK_DIALOG_NONE
+            while (sceUtilityOskGetStatus() != PSP_UTILITY_DIALOG_NONE
                     && waiting++ < 600) {
                 gfx_gu_clear(GFX_BLACK);
                 sceUtilityOskUpdate(1);
@@ -243,7 +279,7 @@ osk_result osk_prompt(const char *prompt, const char *initial,
          * down first is not optional: leaving the OSK running and exiting
          * underneath it hangs the console rather than returning to the XMB. */
         if (pad_exit_requested()
-                && sceUtilityOskGetStatus() == PSP_UTILITY_OSK_DIALOG_VISIBLE) {
+                && sceUtilityOskGetStatus() == PSP_UTILITY_DIALOG_VISIBLE) {
             sceUtilityOskShutdownStart();
         }
     }
