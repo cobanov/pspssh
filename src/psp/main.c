@@ -16,9 +16,10 @@
  */
 
 #include "../core/pspssh.h"
+#include "console.h"
+#include "gfx.h"
 
 #include <pspkernel.h>
-#include <pspdebug.h>
 #include <pspdisplay.h>
 #include <pspctrl.h>
 #include <pspnet.h>
@@ -44,8 +45,6 @@
 PSP_MODULE_INFO("pspssh", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 PSP_HEAP_SIZE_KB(-1024);        /* all but a megabyte; wolfSSL wants room */
-
-#define printf pspDebugScreenPrintf
 
 /* Where the connection details are read from. Typing a hostname on a device
  * with no keyboard is the problem this project has not solved yet, so for now
@@ -97,7 +96,7 @@ static void wait_for_button(void)
 
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
-    printf("\n  press X to exit\n");
+    console_printf("\n  press X to exit\n");
     while (!exit_requested) {
         sceCtrlReadBufferPositive(&pad, 1);
         if (pad.Buttons & PSP_CTRL_CROSS) {
@@ -196,7 +195,7 @@ static int list_profiles(int *found, int max)
     int count = 0;
     int id;
 
-    printf("  saved connections:\n");
+    console_printf("  saved connections:\n");
     for (id = 1; id <= 10 && count < max; id++) {
         if (sceUtilityCheckNetParam(id) != 0) {
             continue;
@@ -204,18 +203,18 @@ static int list_profiles(int *found, int max)
         found[count++] = id;
 
         memset(&data, 0, sizeof(data));
-        printf("   %d:", id);
+        console_printf("   %d:", id);
         if (sceUtilityGetNetParam(id, PSP_NETPARAM_NAME, &data) == 0) {
-            printf(" %s", data.asString);
+            console_printf(" %s", data.asString);
         }
         memset(&data, 0, sizeof(data));
         if (sceUtilityGetNetParam(id, PSP_NETPARAM_SSID, &data) == 0) {
-            printf("  (ssid %s)", data.asString);
+            console_printf("  (ssid %s)", data.asString);
         }
-        printf("\n");
+        console_printf("\n");
     }
     if (count == 0) {
-        printf("   none. create one under Settings > Network Settings.\n");
+        console_printf("   none. create one under Settings > Network Settings.\n");
     }
     return count;
 }
@@ -237,7 +236,7 @@ static int start_network(int preferred)
 
     err = pspSdkInetInit();
     if (err != 0) {
-        printf("  the network stack would not start (0x%08x)\n", err);
+        console_printf("  the network stack would not start (0x%08x)\n", err);
         return 0;
     }
 
@@ -245,7 +244,7 @@ static int start_network(int preferred)
     if (count == 0) {
         return 0;
     }
-    printf("\n");
+    console_printf("\n");
 
     /* The configured one first, then everything else. A wrong number in the
      * config should cost a few seconds, not an evening. */
@@ -254,7 +253,7 @@ static int start_network(int preferred)
     }
     for (i = 0; i < count && !exit_requested; i++) {
         if (available[i] != preferred && try_profile(available[i])) {
-            printf("  (put profile=%d in pspssh.cfg to go straight there)\n",
+            console_printf("  (put profile=%d in pspssh.cfg to go straight there)\n",
                    available[i]);
             return 1;
         }
@@ -271,7 +270,7 @@ static int try_profile(int profile)
 
     err = sceNetApctlConnect(profile);
     if (err != 0) {
-        printf("  profile %d refused to start (0x%08x)\n", profile, err);
+        console_printf("  profile %d refused to start (0x%08x)\n", profile, err);
         return 0;
     }
 
@@ -287,7 +286,7 @@ static int try_profile(int profile)
      * Thirty seconds, not ten. A cold radio scanning 2.4 GHz and then waiting on
      * DHCP is routinely slower than a first guess suggests, and giving up early
      * reports a working network as a broken one. */
-    printf("  joining profile %d", profile);
+    console_printf("  joining profile %d", profile);
     while (state != 4 && tries++ < 600 && !exit_requested) {
         int previous = state;
 
@@ -295,14 +294,14 @@ static int try_profile(int profile)
             break;
         }
         if (state != previous) {
-            printf(" %d", state);
+            console_printf(" %d", state);
         }
         if (state > highest) {
             highest = state;
         }
         sceKernelDelayThread(50 * 1000);
     }
-    printf("\n");
+    console_printf("\n");
 
     if (state != 4) {
         /* The path matters more than where it stopped, and reporting only the
@@ -310,18 +309,18 @@ static int try_profile(int profile)
          * was described as "never started", which is a different problem with a
          * different fix. What counts is the furthest it got. */
         if (highest >= 2) {
-            printf("  profile %d was refused: it found the network, asked to\n",
+            console_printf("  profile %d was refused: it found the network, asked to\n",
                    profile);
-            printf("  join, and was turned away (reached %d, fell back to %d)\n",
+            console_printf("  join, and was turned away (reached %d, fell back to %d)\n",
                    highest, state);
-            printf("  usually the security type — a psp does wep or wpa-tkip,\n");
-            printf("  and wpa2-aes only with the wpa2psp plugin loaded\n");
+            console_printf("  usually the security type — a psp does wep or wpa-tkip,\n");
+            console_printf("  and wpa2-aes only with the wpa2psp plugin loaded\n");
         } else if (highest == 1) {
-            printf("  profile %d scanned but never found the network\n", profile);
-            printf("  check the ssid, and that it is on 2.4 ghz\n");
+            console_printf("  profile %d scanned but never found the network\n", profile);
+            console_printf("  check the ssid, and that it is on 2.4 ghz\n");
         } else {
-            printf("  profile %d never started (state %d)\n", profile, state);
-            printf("  is there a saved connection at that number?\n");
+            console_printf("  profile %d never started (state %d)\n", profile, state);
+            console_printf("  is there a saved connection at that number?\n");
         }
         /* Left disconnected on the way out, or the next attempt inherits a
          * half-open association and fails for a reason that is not its own. */
@@ -333,7 +332,7 @@ static int try_profile(int profile)
     {
         union SceNetApctlInfo info;
         if (sceNetApctlGetInfo(8, &info) == 0) {
-            printf("  wi-fi up, address %s\n", info.ip);
+            console_printf("  wi-fi up, address %s\n", info.ip);
         }
     }
     return 1;
@@ -369,17 +368,17 @@ static int connect_to(const settings *s)
      * TCP timeout, which on an unreachable address is tens of seconds of a
      * screen that looks frozen — and a frozen screen is indistinguishable from
      * a crash to the person holding it. */
-    printf("  looking up %s\n", s->host);
+    console_printf("  looking up %s\n", s->host);
     if (!resolve(s->host, &host)) {
-        printf("  could not resolve %s\n", s->host);
+        console_printf("  could not resolve %s\n", s->host);
         return -1;
     }
 
-    printf("  connecting to %s:%s ...\n", inet_ntoa(host), s->port);
+    console_printf("  connecting to %s:%s ...\n", inet_ntoa(host), s->port);
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        printf("  no socket (%d)\n", errno);
+        console_printf("  no socket (%d)\n", errno);
         return -1;
     }
 
@@ -389,7 +388,7 @@ static int connect_to(const settings *s)
     addr.sin_addr = host;
 
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("  %s:%s refused the connection (%d)\n", s->host, s->port, errno);
+        console_printf("  %s:%s refused the connection (%d)\n", s->host, s->port, errno);
         close(fd);
         return -1;
     }
@@ -485,12 +484,24 @@ static int show_and_accept(void *ctx, const char *fingerprint,
     /* Shown rather than checked, for now. Storing it and refusing a change is
      * the next step; printing a fingerprint nobody compares would be theatre,
      * so this says plainly what it is doing. */
-    printf("  host key %s\n", fingerprint);
-    printf("  (not yet checked against a stored one)\n");
+    console_printf("  host key %s\n", fingerprint);
+    console_printf("  (not yet checked against a stored one)\n");
     return 1;
 }
 
 /* ------------------------------------------------------------------ main -- */
+
+/* Every way out of this application is the same way out: say something, wait
+ * for the button, put the screen back, leave. Writing it once means the screen
+ * cannot be left un-terminated down one path out of five — which is exactly the
+ * kind of thing that goes unnoticed until a PSP needs its battery pulled. */
+static int quit(void)
+{
+    wait_for_button();
+    gfx_shutdown();
+    sceKernelExitGame();
+    return 0;
+}
 
 int main(void)
 {
@@ -500,50 +511,48 @@ int main(void)
     char err[PSPSSH_ERROR_LEN];
     int fd;
 
-    pspDebugScreenInit();
+    if (gfx_init() != 0) {
+        /* Nothing can be shown if this fails, including why it failed. Leaving
+         * rather than carrying on blind is the only honest option. */
+        sceKernelExitGame();
+        return 0;
+    }
+    console_reset();
     setup_callbacks();
 
     /* The banner. It names the build and who made it, and then says what the
      * client actually negotiates — which is the whole reason this exists, and
      * is worth stating where someone will read it rather than only in a
      * README they will not. */
-    printf("pspssh v%s  -  %s\n", PSPSSH_VERSION, PSPSSH_AUTHOR);
-    printf("ssh for the psp: curve25519, ed25519, aes256-ctr\n");
-    printf("------------------------------------------------------------\n\n");
+    console_printf("pspssh v%s  -  %s\n", PSPSSH_VERSION, PSPSSH_AUTHOR);
+    console_printf("ssh for the psp: curve25519, ed25519, aes256-ctr\n");
+    console_printf("------------------------------------------------------------\n\n");
 
     if (!load_settings(&config)) {
-        printf("  no usable %s next to the binary.\n\n", CONFIG_PATH);
-        printf("  it should look like:\n");
-        printf("    host=192.168.1.10\n");
-        printf("    port=22\n");
-        printf("    user=me\n");
-        printf("    password=secret\n");
-        printf("    profile=1\n");
-        wait_for_button();
-        sceKernelExitGame();
-        return 0;
+        console_printf("  no usable %s next to the binary.\n\n", CONFIG_PATH);
+        console_printf("  it should look like:\n");
+        console_printf("    host=192.168.1.10\n");
+        console_printf("    port=22\n");
+        console_printf("    user=me\n");
+        console_printf("    password=secret\n");
+        console_printf("    profile=1\n");
+        return quit();
     }
-    printf("  %s@%s:%s\n\n", config.user, config.host, config.port);
+    console_printf("  %s@%s:%s\n\n", config.user, config.host, config.port);
 
     if (!start_network(config.profile)) {
-        wait_for_button();
-        sceKernelExitGame();
-        return 0;
+        return quit();
     }
 
     fd = connect_to(&config);
     if (fd < 0) {
-        wait_for_button();
-        sceKernelExitGame();
-        return 0;
+        return quit();
     }
-    printf("  connected. key exchange may take a moment...\n");
+    console_printf("  connected. key exchange may take a moment...\n");
 
     if (pspssh_init() != 0) {
-        printf("  the ssh library would not start\n");
-        wait_for_button();
-        sceKernelExitGame();
-        return 0;
+        console_printf("  the ssh library would not start\n");
+        return quit();
     }
 
     memset(&session_config, 0, sizeof(session_config));
@@ -561,15 +570,13 @@ int main(void)
 
     session = pspssh_open(&session_config, err, sizeof(err));
     if (session == NULL) {
-        printf("\n  ssh failed: %s\n", err);
+        console_printf("\n  ssh failed: %s\n", err);
         close(fd);
         pspssh_cleanup();
-        wait_for_button();
-        sceKernelExitGame();
-        return 0;
+        return quit();
     }
 
-    printf("  session open\n\n");
+    console_printf("  session open\n\n");
 
     /* Runs one command and shows what comes back. A keyboard is the next
      * problem; proving the session carries real output is this one. */
@@ -583,7 +590,7 @@ int main(void)
             int n = pspssh_read(session, buf, sizeof(buf) - 1);
 
             if (n < 0) {
-                printf("\n  session ended: %s\n", pspssh_error(session));
+                console_printf("\n  session ended: %s\n", pspssh_error(session));
                 break;
             }
             if (n == 0) {
@@ -593,7 +600,7 @@ int main(void)
             }
             quiet = 0;
             buf[n] = '\0';
-            printf("%s", buf);
+            console_printf("%s", buf);
         }
     }
 
@@ -601,7 +608,5 @@ int main(void)
     close(fd);
     pspssh_cleanup();
 
-    wait_for_button();
-    sceKernelExitGame();
-    return 0;
+    return quit();
 }
