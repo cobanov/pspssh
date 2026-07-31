@@ -29,8 +29,10 @@
 #include "net.h"
 #include "osk.h"
 #include "pad.h"
+#include "term.h"
 #include "ui.h"
 
+#include <pspctrl.h>
 #include <pspkernel.h>
 
 #include <stdio.h>
@@ -101,7 +103,7 @@ static int show_and_accept(void *ctx, const char *fingerprint,
     return 1;
 }
 
-/* --------------------------------------------------------------- session -- */
+/* -------------------------------------------------------------- terminal -- */
 
 /* Overwriting through a volatile pointer, so the compiler cannot decide a
  * buffer nobody reads again does not need clearing. */
@@ -113,6 +115,197 @@ static void wipe(void *data, unsigned int len)
         *at++ = 0;
     }
 }
+
+/* The title row and the key legend take one line each, so the shell gets the
+ * thirty-two between them. */
+#define TERM_ROWS (GFX_ROWS - 2)
+#define TERM_TOP  1
+
+/* SGR's sixteen, in the order SGR numbers them. Not the saturated primaries a
+ * palette generator would give: this is read on a small backlit panel, often at
+ * arm's length, and pure blue text on black is close to unreadable there. */
+static const unsigned int palette[16] = {
+    GFX_RGB(0x00, 0x00, 0x00), GFX_RGB(0xcc, 0x44, 0x44),
+    GFX_RGB(0x44, 0xbb, 0x55), GFX_RGB(0xc0, 0xa0, 0x30),
+    GFX_RGB(0x50, 0x80, 0xd0), GFX_RGB(0xb0, 0x60, 0xb0),
+    GFX_RGB(0x40, 0xa8, 0xa8), GFX_RGB(0xc8, 0xc8, 0xc8),
+    GFX_RGB(0x60, 0x60, 0x60), GFX_RGB(0xff, 0x70, 0x70),
+    GFX_RGB(0x70, 0xf0, 0x80), GFX_RGB(0xf0, 0xd0, 0x60),
+    GFX_RGB(0x80, 0xb0, 0xff), GFX_RGB(0xe0, 0x90, 0xe0),
+    GFX_RGB(0x70, 0xe0, 0xe0), GFX_RGB(0xff, 0xff, 0xff)
+};
+
+static void draw_terminal(const host_entry *host, int blink)
+{
+    int row;
+    int col;
+
+    gfx_clear(GFX_BLACK);
+
+    gfx_fill_cells(0, 0, GFX_COLS, 1, GFX_ACCENT);
+    gfx_printf(1, 0, GFX_WHITE, GFX_ACCENT, "%s@%s", host->user, host->name);
+    gfx_printf(GFX_COLS - 26, 0, GFX_WHITE, GFX_ACCENT,
+               "v%s  %s", PSPSSH_VERSION, PSPSSH_AUTHOR);
+
+    for (row = 0; row < TERM_ROWS; row++) {
+        for (col = 0; col < GFX_COLS; col++) {
+            const term_cell *cell = term_at(col, row);
+            unsigned char ch = cell != NULL ? cell->ch : ' ';
+            unsigned int fg = palette[cell != NULL ? (cell->fg & 15) : 7];
+            unsigned int bg = palette[cell != NULL ? (cell->bg & 15) : 0];
+
+            /* The cursor is a block that blinks, because a still one on a
+             * screen full of text is genuinely hard to find, and knowing where
+             * the shell thinks you are is most of what a cursor is for. */
+            if (blink && row == term_cursor_row()
+                    && col == term_cursor_col()) {
+                unsigned int swap = fg;
+
+                fg = bg;
+                bg = swap;
+            }
+            gfx_glyph(col, row + TERM_TOP, ch, fg, bg);
+        }
+    }
+
+    gfx_puts(1, GFX_ROWS - 1,
+             "X type  [] enter  /\\ ctrl-c  O leave  dpad arrows",
+             GFX_GREY, GFX_BLACK);
+}
+
+/* Sends the whole of a short string, pumping until it is gone.
+ *
+ * pspssh_write returns 0 when the channel's send window is full, which right
+ * after a channel opens is the ordinary case rather than an exceptional one.
+ * A caller that wrote once and moved on would silently drop the first thing
+ * anybody typed. */
+static int send_all(pspssh_session *session, const char *text, int len)
+{
+    int sent = 0;
+    int spins = 0;
+
+    while (sent < len && spins < 2000) {
+        int n = pspssh_write(session, text + sent, (unsigned int)(len - sent));
+
+        if (n < 0) {
+            return -1;
+        }
+        if (n == 0) {
+            spins++;
+            sceKernelDelayThread(1000);
+            continue;
+        }
+        spins = 0;
+        sent += n;
+    }
+    return sent == len ? 0 : -1;
+}
+
+static void run_terminal(pspssh_session *session, const host_entry *host)
+{
+    char typed[512];
+    int frames = 0;
+    int ended = 0;
+    const char *ending = NULL;
+
+    term_reset(GFX_COLS, TERM_ROWS);
+
+    while (!ended && !pad_exit_requested()) {
+        unsigned int pressed;
+        int drained = 0;
+
+        /* Read until the far side is quiet or a screenful has arrived, rather
+         * than once per frame. At one 512-byte read per vertical blank a
+         * directory listing would take seconds to appear, which reads as a slow
+         * connection and is really a slow client. */
+        for (;;) {
+            unsigned char chunk[1024];
+            int n = pspssh_read(session, chunk, sizeof(chunk));
+
+            if (n < 0) {
+                ending = pspssh_error(session);
+                ended = 1;
+                break;
+            }
+            if (n == 0) {
+                break;
+            }
+            term_feed(chunk, n);
+            drained += n;
+            if (drained > 8192) {
+                break;
+            }
+        }
+
+        draw_terminal(host, (frames / 20) % 2 == 0);
+        gfx_flip();
+        frames++;
+
+        if (ended) {
+            break;
+        }
+
+        pressed = pad_pressed();
+        if (pressed == 0) {
+            continue;
+        }
+
+        if ((pressed & PSP_CTRL_CROSS) != 0) {
+            /* The keyboard is modal, so this is line-at-a-time input. It suits
+             * a shell and does not suit an editor, which the README says rather
+             * than leaving people to find out. */
+            typed[0] = '\0';
+            if (osk_prompt("", "", typed, sizeof(typed), OSK_TEXT,
+                           NULL, NULL) == OSK_ENTERED) {
+                int len = (int)strlen(typed);
+
+                typed[len] = '\n';
+                if (send_all(session, typed, len + 1) != 0) {
+                    ending = "the line could not be sent";
+                    ended = 1;
+                }
+            }
+            wipe(typed, sizeof(typed));
+            continue;
+        }
+
+        {
+            /* What the buttons cannot spell, they send directly. Ctrl-C in
+             * particular: a wedged command with no way to interrupt it would
+             * mean pulling the battery. */
+            const char *keys = NULL;
+            int len = 1;
+
+            if ((pressed & PSP_CTRL_SQUARE) != 0)        keys = "\r";
+            else if ((pressed & PSP_CTRL_TRIANGLE) != 0) keys = "\003";
+            else if ((pressed & PSP_CTRL_SELECT) != 0)   keys = "\004";
+            else if ((pressed & PSP_CTRL_START) != 0)    keys = "\t";
+            else if ((pressed & PSP_CTRL_LTRIGGER) != 0) keys = "\033";
+            else if ((pressed & PSP_CTRL_RTRIGGER) != 0) keys = "\014";
+            else if ((pressed & PSP_CTRL_UP) != 0)    { keys = "\033[A"; len = 3; }
+            else if ((pressed & PSP_CTRL_DOWN) != 0)  { keys = "\033[B"; len = 3; }
+            else if ((pressed & PSP_CTRL_RIGHT) != 0) { keys = "\033[C"; len = 3; }
+            else if ((pressed & PSP_CTRL_LEFT) != 0)  { keys = "\033[D"; len = 3; }
+
+            if (keys != NULL && send_all(session, keys, len) != 0) {
+                ending = "the keystroke could not be sent";
+                ended = 1;
+            }
+        }
+
+        if ((pressed & PSP_CTRL_CIRCLE) != 0) {
+            if (ui_confirm("leave this session?",
+                           "the shell on the other side will be closed")) {
+                return;
+            }
+        }
+    }
+
+    ui_message("the session ended",
+               ending != NULL ? ending : "the far side closed it", GFX_GREY);
+}
+
+/* --------------------------------------------------------------- session -- */
 
 static void run_session(const host_entry *chosen)
 {
@@ -161,9 +354,12 @@ static void run_session(const host_entry *chosen)
     config.on_hostkey = show_and_accept;
     config.on_wait = yield_briefly;
     config.handshake_timeout_ms = 30000;
-    /* What the console gives us until the real terminal lands. */
+    /* The shape the far side is told about, which is the screen less the title
+     * row and the key legend. Getting this right at the handshake rather than
+     * correcting it afterwards means a full-screen program never draws its
+     * first frame two lines too tall. */
     config.columns = GFX_COLS;
-    config.rows = GFX_ROWS;
+    config.rows = TERM_ROWS;
 
     session = pspssh_open(&config, err, sizeof(err));
     if (session == NULL) {
@@ -176,40 +372,11 @@ static void run_session(const host_entry *chosen)
     /* Handed over; nothing below this needs it. */
     wipe(host.password, sizeof(host.password));
 
-    console_printf("  session open\n\n");
-
-    /* Runs one command and shows what comes back. Typing is the next problem;
-     * proving the session carries real output is this one. */
-    pspssh_write(session, "uname -a; id\n", 13);
-
-    {
-        char buf[512];
-        int quiet = 0;
-
-        while (!pad_exit_requested() && quiet < 150) {
-            int n = pspssh_read(session, buf, sizeof(buf) - 1);
-
-            if (n < 0) {
-                console_printf("\n  session ended: %s\n", pspssh_error(session));
-                break;
-            }
-            if (n == 0) {
-                quiet++;
-                sceKernelDelayThread(20 * 1000);
-                continue;
-            }
-            quiet = 0;
-            buf[n] = '\0';
-            console_printf("%s", buf);
-        }
-        wipe(buf, sizeof(buf));
-    }
+    run_terminal(session, &host);
 
     pspssh_close(session);
     close(fd);
     wipe(&host, sizeof(host));
-
-    ui_message("the session ended", "what it said is behind this", GFX_GREY);
 }
 
 /* ------------------------------------------------------------------ main -- */
