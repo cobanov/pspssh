@@ -222,6 +222,25 @@ static void name_from_address(void)
     form.name[i] = '\0';
 }
 
+/* Shows a keyboard that would not open, rather than letting the button look
+ * broken. Returns what osk_prompt returned, so callers can go on ignoring
+ * OSK_CANCELLED and stop ignoring OSK_UNAVAILABLE. */
+static osk_result ask(const char *prompt, const char *initial,
+                      char *out, int out_len, osk_kind kind)
+{
+    osk_result result = osk_prompt(prompt, initial, out, out_len, kind,
+                                   draw_form, NULL);
+
+    if (result == OSK_UNAVAILABLE) {
+        char detail[64];
+
+        snprintf(detail, sizeof(detail),
+                 "sceUtilityOskInitStart gave 0x%08x", osk_start_error());
+        ui_message("the keyboard would not open", detail, GFX_RED);
+    }
+    return result;
+}
+
 static void edit_current_field(void)
 {
     /* The field is passed as both the initial value and the destination.
@@ -231,36 +250,34 @@ static void edit_current_field(void)
      * instead of two that have to agree. */
     switch (form_field) {
     case FIELD_NAME:
-        osk_prompt("a short name for this host", form.name,
-                   form.name, sizeof(form.name), OSK_TEXT, draw_form, NULL);
+        ask("a short name for this host", form.name,
+            form.name, sizeof(form.name), OSK_TEXT);
         break;
 
     case FIELD_ADDRESS:
-        osk_prompt("host name or ip address", form.address,
-                   form.address, sizeof(form.address), OSK_HOSTNAME,
-                   draw_form, NULL);
+        ask("host name or ip address", form.address,
+            form.address, sizeof(form.address), OSK_HOSTNAME);
         break;
 
     case FIELD_USER:
-        osk_prompt("user name on the server", form.user,
-                   form.user, sizeof(form.user), OSK_TEXT, draw_form, NULL);
+        ask("user name on the server", form.user,
+            form.user, sizeof(form.user), OSK_TEXT);
         break;
 
     case FIELD_PASSWORD:
         /* Never pre-filled with the stored one: the panel would show it in
          * clear text on a screen somebody else can see. An empty prompt that
          * keeps the old value when cancelled is the safer default. */
-        osk_prompt("password — leave empty to be asked each time", "",
-                   form.password, sizeof(form.password), OSK_TEXT,
-                   draw_form, NULL);
+        ask("password — leave empty to be asked each time", "",
+            form.password, sizeof(form.password), OSK_TEXT);
         break;
 
     case FIELD_PORT: {
         char digits[8];
 
         snprintf(digits, sizeof(digits), "%d", form.port);
-        if (osk_prompt("port", digits, digits, sizeof(digits), OSK_DIGITS,
-                       draw_form, NULL) == OSK_ENTERED) {
+        if (ask("port", digits, digits, sizeof(digits), OSK_DIGITS)
+                == OSK_ENTERED) {
             int value = atoi(digits);
 
             /* Kept only if it is a port. Rejecting here means the save button
@@ -279,9 +296,8 @@ static void edit_current_field(void)
         char digits[8];
 
         snprintf(digits, sizeof(digits), "%d", form.profile);
-        if (osk_prompt("wi-fi profile number, or 0 to try each one", digits,
-                       digits, sizeof(digits), OSK_DIGITS, draw_form, NULL)
-                == OSK_ENTERED) {
+        if (ask("wi-fi profile number, or 0 to try each one", digits,
+                digits, sizeof(digits), OSK_DIGITS) == OSK_ENTERED) {
             int value = atoi(digits);
 
             if (value >= 0 && value <= 10) {
@@ -376,6 +392,13 @@ int ui_ask_password(const host_entry *entry, char *out, int out_len)
     wait_for_release();
     if (osk_prompt(prompt, "", out, out_len, OSK_TEXT, NULL, NULL)
             != OSK_ENTERED) {
+        if (osk_start_error() != 0) {
+            char detail[64];
+
+            snprintf(detail, sizeof(detail),
+                     "sceUtilityOskInitStart gave 0x%08x", osk_start_error());
+            ui_message("the keyboard would not open", detail, GFX_RED);
+        }
         return 0;
     }
     return out[0] != '\0';
