@@ -214,19 +214,32 @@ osk_result osk_prompt(const char *prompt, const char *initial,
     while (!finished) {
         int status;
 
-        /* Through the graphics engine, not by writing pixels — see gfx.h. The
-         * keyboard draws through the GE and queues its work asynchronously, so
-         * a clear done by the processor races it and wins about as often as it
-         * loses. That race is what a black screen instead of a keyboard looks
-         * like. */
-        gfx_gu_clear(GFX_BLACK);
+        /* A backdrop paints every pixel itself, so clearing first would be the
+         * same buffer written twice a frame — once by the graphics engine and
+         * once by the processor, the second undoing the first.
+         *
+         * The engine clear costs more than the wasted writes. gfx_gu_clear ends
+         * with sceGuSync, which waits for the whole queue, and the keyboard's
+         * own rendering is in that queue. Every frame we asked the engine to
+         * clear, we then blocked until the keyboard had finished drawing — so
+         * the loop ran at the keyboard's pace instead of the display's, and a
+         * panel that takes a moment to appear took several seconds.
+         *
+         * With a backdrop there is no engine work here at all. */
         if (backdrop != NULL) {
-            /* After the sync inside gfx_gu_clear, so the engine is idle and
-             * these writes cannot be overtaken by the clear they follow. */
             backdrop(backdrop_ctx);
+        } else {
+            gfx_gu_clear(GFX_BLACK);
         }
 
         status = sceUtilityOskGetStatus();
+        if (status != PSP_UTILITY_DIALOG_VISIBLE) {
+            /* Between asking for the keyboard and it appearing, the screen
+             * would otherwise show the session with nothing happening to it.
+             * The system loads a font here and it is not always quick. */
+            gfx_puts(2, GFX_ROWS - 1, "opening the keyboard...",
+                     GFX_YELLOW, GFX_BLACK);
+        }
         switch (status) {
         case PSP_UTILITY_DIALOG_VISIBLE:
             appeared = 1;
