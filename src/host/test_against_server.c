@@ -119,11 +119,14 @@ static int connect_to(const char *host, const char *port)
 
 /* The host has pre-emptive scheduling and would survive without this, but the
  * PSP does not — so the same code path is exercised here rather than left to
- * be discovered on hardware. */
-static void yield_briefly(void *ctx)
+ * be discovered on hardware.
+ *
+ * Returns the milliseconds it waited, which is what bounds the handshake. */
+static int yield_briefly(void *ctx)
 {
     (void)ctx;
     usleep(1000);
+    return 1;
 }
 
 /* -------------------------------------------------------------- host key -- */

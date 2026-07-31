@@ -459,16 +459,20 @@ static int sock_send(void *io, const void *buf, unsigned int len)
     return n;
 }
 
-/* Yielding while the handshake waits.
+/* Yielding while the handshake waits, and telling it how long for.
  *
  * A millisecond is enough to let the network threads run, and short enough
  * that the handshake is not slowed by the waiting. Without this the main
  * thread spins and never gives them a chance, so the bytes it is waiting for
- * never arrive — the screen sat on "key exchange may take a moment" forever. */
-static void yield_briefly(void *ctx)
+ * never arrive — the screen sat on "key exchange may take a moment" forever.
+ *
+ * The return value is the session's only clock: it adds these up to decide
+ * when a handshake has taken too long. */
+static int yield_briefly(void *ctx)
 {
     (void)ctx;
-    sceKernelDelayThread(1000);
+    sceKernelDelayThread(1000);         /* microseconds */
+    return 1;                           /* milliseconds */
 }
 
 /* -------------------------------------------------------------- host key -- */
