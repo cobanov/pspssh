@@ -24,6 +24,13 @@
 extern "C" {
 #endif
 
+/* The build's own name for itself.
+ *
+ * An application that cannot tell you which build it is makes "did I copy the
+ * new one across?" unanswerable without a computer — which is exactly the
+ * question that comes up while iterating on a device you flash by hand. */
+#define PSPSSH_VERSION "0.3.1"
+
 /* Enough for "SHA256:" and a 43-character base64 digest. */
 #define PSPSSH_FINGERPRINT_LEN 64
 
