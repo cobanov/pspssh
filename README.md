@@ -124,10 +124,12 @@ any of them.
 | `ICON1.PMF` | 144×80 | an animation shown instead of the icon |
 | `PIC0.PNG` | 480×272 | drawn over the background |
 | `PIC1.PNG` | 480×272 | the background, while this is the highlighted item |
-| `SND0.AT3` | ATRAC3 | music, looped while it is highlighted |
+| `SND0.AT3` | ATRAC3 | music, while it is highlighted — see [#51](https://github.com/cobanov/pspssh/issues/51) |
 
-`SND0.AT3` has to be plain ATRAC3 rather than ATRAC3plus, which ffmpeg cannot
-produce — [atracdenc](https://github.com/dcherednik/atracdenc) can.
+There is no `SND0.AT3` here. Several conformant ones were tried and none of them
+played; [#51](https://github.com/cobanov/pspssh/issues/51) records what was
+established so the next attempt does not start from nothing. Drop a file in and
+the build will pick it up.
 
 ## Building
 
