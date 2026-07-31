@@ -34,15 +34,6 @@ const char *cardfile_error(void)
     return last_error[0] != '\0' ? last_error : "no error";
 }
 
-void cardfile_wipe(void *data, unsigned int len)
-{
-    volatile unsigned char *at = (volatile unsigned char *)data;
-
-    while (len-- > 0) {
-        *at++ = 0;
-    }
-}
-
 static void temp_name(const char *path, char *out, int out_len)
 {
     snprintf(out, out_len, "%s.tmp", path);

@@ -13,6 +13,9 @@
 #   term.c        parses escape sequences. The bug it guards against is "the
 #                 screen looks a bit odd sometimes", which is not a report
 #                 anyone can act on.
+#   console.c     wraps, scrolls and expands tabs. It shows every message the
+#                 application produces before a session opens, so a bug here
+#                 corrupts the diagnosis of every other bug.
 #
 # The first two are compiled against a POSIX shim for the six sceIo calls;
 # term.c is plain C and needs nothing. The rest of src/psp genuinely does need a screen, a
@@ -35,6 +38,9 @@ $CC -std=c99 -Wall -Wextra -Werror -O1 -DPSPSSH_HOST_TEST \
 $CC -std=c99 -Wall -Wextra -Werror -O1 \
     -o "$WORK/test_terminal" \
     src/host/test_terminal.c src/psp/term.c
+$CC -std=c99 -Wall -Wextra -Werror -O1 \
+    -o "$WORK/test_console" \
+    src/host/test_console.c src/psp/console.c
 
 # In its own directory: the host tests create, rename and delete pspssh.hosts,
 # and doing that in the source tree would be a good way to lose a real one.
@@ -44,3 +50,5 @@ echo
 ( cd "$WORK" && ./test_knownhosts )
 echo
 ( cd "$WORK" && ./test_terminal )
+echo
+( cd "$WORK" && ./test_console )

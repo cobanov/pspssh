@@ -32,6 +32,7 @@
 #include "pad.h"
 #include "term.h"
 #include "ui.h"
+#include "wipe.h"
 
 #include <pspctrl.h>
 #include <pspkernel.h>
@@ -142,17 +143,6 @@ static int check_hostkey(void *ctx, const char *fingerprint,
 
 /* -------------------------------------------------------------- terminal -- */
 
-/* Overwriting through a volatile pointer, so the compiler cannot decide a
- * buffer nobody reads again does not need clearing. */
-static void wipe(void *data, unsigned int len)
-{
-    volatile unsigned char *at = (volatile unsigned char *)data;
-
-    while (len-- > 0) {
-        *at++ = 0;
-    }
-}
-
 /* The title row and the key legend take one line each, so the shell gets the
  * twenty between them. */
 #define TERM_ROWS (GFX_ROWS - 2)
@@ -172,17 +162,38 @@ static const unsigned int palette[16] = {
     GFX_RGB(0x70, 0xe0, 0xe0), GFX_RGB(0xff, 0xff, 0xff)
 };
 
+/* Frames left of the visual bell.
+ *
+ * The parser has always noticed 0x07 and nothing ever asked. A console whose
+ * volume is down — or which, like this one, plays no sound of its own — needs
+ * the bell to be visible or it is not a bell. Two flashes of the title bar is
+ * enough to catch the eye and short enough not to become the thing you look at
+ * instead of the shell. */
+#define BELL_FRAMES 24
+static int bell_left;
+
 static void draw_terminal(const host_entry *host, int blink)
 {
     int row;
     int col;
+    unsigned int bar = GFX_ACCENT;
+
+    if (bell_left > 0 && (bell_left / 6) % 2 == 0) {
+        bar = GFX_RED;
+    }
 
     gfx_clear(GFX_BLACK);
 
-    gfx_fill_cells(0, 0, GFX_COLS, 1, GFX_ACCENT);
-    gfx_printf(1, 0, GFX_WHITE, GFX_ACCENT, "%s@%s", host->user, host->name);
-    gfx_printf(GFX_COLS - 26, 0, GFX_WHITE, GFX_ACCENT,
-               "v%s  %s", PSPSSH_VERSION, PSPSSH_AUTHOR);
+    gfx_fill_cells(0, 0, GFX_COLS, 1, bar);
+    gfx_printf(1, 0, GFX_WHITE, bar, "%s@%s", host->user, host->name);
+    {
+        char stamp[40];
+        int at;
+
+        snprintf(stamp, sizeof(stamp), "v%s  %s", PSPSSH_VERSION, PSPSSH_AUTHOR);
+        at = GFX_COLS - 1 - (int)strlen(stamp);
+        gfx_puts(at < 0 ? 0 : at, 0, stamp, GFX_WHITE, bar);
+    }
 
     for (row = 0; row < TERM_ROWS; row++) {
         for (col = 0; col < GFX_COLS; col++) {
@@ -258,6 +269,7 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
     const char *ending = NULL;
 
     term_reset(GFX_COLS, TERM_ROWS);
+    bell_left = 0;
 
     while (!ended && !pad_exit_requested()) {
         unsigned int pressed;
@@ -286,9 +298,16 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
             }
         }
 
+        if (term_take_bell()) {
+            bell_left = BELL_FRAMES;
+        }
+
         draw_terminal(host, (frames / 20) % 2 == 0);
         gfx_flip();
         frames++;
+        if (bell_left > 0) {
+            bell_left--;
+        }
 
         if (ended) {
             break;
@@ -315,7 +334,7 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
                     ended = 1;
                 }
             }
-            wipe(typed, sizeof(typed));
+            wipe_bytes(typed, sizeof(typed));
             continue;
         }
 
@@ -346,6 +365,7 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
         if ((pressed & PSP_CTRL_CIRCLE) != 0) {
             if (ui_confirm("leave this session?",
                            "the shell on the other side will be closed")) {
+                wipe_bytes(typed, sizeof(typed));
                 return;
             }
         }
@@ -369,7 +389,7 @@ static void run_session(const host_entry *chosen)
 
     if (host.password[0] == '\0'
             && !ui_ask_password(&host, host.password, sizeof(host.password))) {
-        wipe(&host, sizeof(host));
+        wipe_bytes(&host, sizeof(host));
         return;
     }
 
@@ -380,7 +400,7 @@ static void run_session(const host_entry *chosen)
     console_printf("  %s@%s:%d\n\n", host.user, host.address, host.port);
 
     if (!net_start(host.profile)) {
-        wipe(&host, sizeof(host));
+        wipe_bytes(&host, sizeof(host));
         ui_message("the network would not come up",
                    "the log behind this says how far it got", GFX_RED);
         return;
@@ -388,7 +408,7 @@ static void run_session(const host_entry *chosen)
 
     fd = net_connect(host.address, host.port);
     if (fd < 0) {
-        wipe(&host, sizeof(host));
+        wipe_bytes(&host, sizeof(host));
         ui_message("the server could not be reached",
                    "the log behind this says why", GFX_RED);
         return;
@@ -415,19 +435,19 @@ static void run_session(const host_entry *chosen)
     session = pspssh_open(&config, err, sizeof(err));
     if (session == NULL) {
         close(fd);
-        wipe(&host, sizeof(host));
+        wipe_bytes(&host, sizeof(host));
         ui_message("ssh failed", err, GFX_RED);
         return;
     }
 
     /* Handed over; nothing below this needs it. */
-    wipe(host.password, sizeof(host.password));
+    wipe_bytes(host.password, sizeof(host.password));
 
     run_terminal(session, &host);
 
     pspssh_close(session);
     close(fd);
-    wipe(&host, sizeof(host));
+    wipe_bytes(&host, sizeof(host));
 }
 
 /* ------------------------------------------------------------------ main -- */

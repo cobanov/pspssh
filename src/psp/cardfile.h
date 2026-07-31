@@ -38,9 +38,4 @@ int cardfile_write(const char *path, const char *text, int len);
 /* Why the last call failed. Never NULL. */
 const char *cardfile_error(void);
 
-/* Clearing a buffer so the compiler cannot decide that a buffer nobody reads
- * again does not need clearing. Here because both callers hold credentials in
- * one, and because writing it twice is how one of them gets it wrong. */
-void cardfile_wipe(void *data, unsigned int len);
-
 #endif /* PSPSSH_CARDFILE_H */

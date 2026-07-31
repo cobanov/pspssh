@@ -25,13 +25,6 @@
  * the network is already up. */
 int net_start(int preferred);
 
-/* Whether a previous net_start succeeded. */
-int net_is_up(void);
-
-/* Which profile it ended up on, or 0. Worth showing: it is often not the one
- * that was asked for. */
-int net_profile(void);
-
 /* Resolves and connects. Returns a socket, or -1 with the reason on the
  * console. */
 int net_connect(const char *host, int port);

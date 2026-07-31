@@ -9,6 +9,7 @@
 #include "hosts.h"
 
 #include "cardfile.h"
+#include "wipe.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,7 +70,7 @@ void hosts_forget_passwords(void)
     int i;
 
     for (i = 0; i < HOSTS_MAX; i++) {
-        cardfile_wipe(entries[i].password, sizeof(entries[i].password));
+        wipe_bytes(entries[i].password, sizeof(entries[i].password));
     }
 }
 
@@ -244,7 +245,7 @@ static void import_legacy(void)
         entries[count++] = entry;
         save();
     }
-    cardfile_wipe(buffer, sizeof(buffer));
+    wipe_bytes(buffer, sizeof(buffer));
 }
 
 /* ----------------------------------------------------------------- save -- */
@@ -270,7 +271,7 @@ static int save(void)
                            entries[i].profile);
 
         if (len <= 0 || at + len >= (int)sizeof(text)) {
-            cardfile_wipe(text, sizeof(text));
+            wipe_bytes(text, sizeof(text));
             fail("the host list did not fit");
             return -1;
         }
@@ -279,7 +280,7 @@ static int save(void)
 
     result = cardfile_write(HOSTS_PATH, text, at);
     /* Passwords were in there. */
-    cardfile_wipe(text, sizeof(text));
+    wipe_bytes(text, sizeof(text));
     if (result != 0) {
         fail(cardfile_error());
     }
@@ -309,7 +310,7 @@ int hosts_load(void)
     }
 
     parse(buffer);
-    cardfile_wipe(buffer, sizeof(buffer));
+    wipe_bytes(buffer, sizeof(buffer));
     return 0;
 }
 
@@ -355,7 +356,7 @@ int hosts_remove(int index)
         fail("that host is no longer in the list");
         return -1;
     }
-    cardfile_wipe(entries[index].password, sizeof(entries[index].password));
+    wipe_bytes(entries[index].password, sizeof(entries[index].password));
     for (i = index; i + 1 < count; i++) {
         entries[i] = entries[i + 1];
     }

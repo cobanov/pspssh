@@ -88,9 +88,11 @@ void gfx_glyph(int col, int row, unsigned char ch,
 void gfx_puts(int col, int row, const char *text,
               unsigned int fg, unsigned int bg);
 
-/* As gfx_puts, formatted. Clipped to one row. */
+/* As gfx_puts, formatted. Clipped to one row. Checked by the compiler — see
+ * the note on console_printf for why that matters here. */
 void gfx_printf(int col, int row, unsigned int fg, unsigned int bg,
-                const char *fmt, ...);
+                const char *fmt, ...)
+    __attribute__((format(printf, 5, 6)));
 
 /* Clears through the graphics engine rather than by writing pixels, and waits
  * for it to finish.

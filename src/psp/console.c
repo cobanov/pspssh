@@ -44,11 +44,6 @@ void console_reset(void)
     ready = 1;
 }
 
-void console_colour(unsigned int fg)
-{
-    pen = fg;
-}
-
 static void scroll_up(void)
 {
     int row;
@@ -103,7 +98,9 @@ static void put(char ch)
     cursor_col++;
 }
 
-void console_render(void)
+/* Static now. It was public for a caller that would draw over the log in the
+ * same frame, and no such caller was ever written. */
+static void console_render(void)
 {
     int row, col;
 
