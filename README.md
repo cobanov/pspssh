@@ -12,52 +12,104 @@ The fix is not to weaken every server you own. It is a client that speaks
 `curve25519-sha256`, `ssh-ed25519` and an authenticated cipher a 2026 server
 still offers.
 
-Target hardware is a **PSP Go (N1000)** on custom firmware. 480×272 gives an
-**80×30** terminal, which is a proper one.
+Target hardware is a **PSP Go (N1000)** on custom firmware, and it has been
+confirmed on one.
+
+## What it does
+
+Add your servers on the device, pick one, get a shell.
+
+```
+ pspssh                                    v1.1.0  Mert Cobanov
+
+   pve                  bb@192.168.8.45:2222
+ > macmini              mert@192.168.1.20:22
+   laptop               mert@10.0.0.4:22
+
+   +  add a host
+
+ X connect  [] edit  /\ delete  SEL forget key  O quit
+```
+
+- **Modern cryptography, and only that.** One algorithm per slot:
+  `curve25519-sha256`, `ssh-ed25519`, `aes256-ctr`, `hmac-sha2-256`. A weak
+  session cannot be negotiated because there is nothing weak to negotiate.
+- **Servers managed on the console.** Add, edit and delete hosts with the
+  system on-screen keyboard. No memory card shuffling.
+- **Host keys are remembered.** Trust on first use, and a changed key is
+  refused rather than warned about.
+- **A real terminal.** Colours, cursor addressing, erase and scroll regions —
+  what a shell sends, drawn as a shell means it.
+- **Passwords are optional.** Leave one out and it is asked for at connect
+  time, then forgotten.
 
 ## Status
 
 **It works on hardware.** A PSP Go on custom firmware brings up Wi-Fi, connects,
 completes a `curve25519-sha256` key exchange against a real OpenSSH server,
-verifies its `ssh-ed25519` host key, authenticates, and runs a command in a
-shell. [docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack and
-is worth reading before contributing.
+verifies its `ssh-ed25519` host key, authenticates, and runs a shell.
+[docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack and is worth
+reading before contributing.
 
-- [x] Toolchain verified: `pspdev/pspdev` builds, networking libraries present
-- [x] Prior art and platform research
-- [x] wolfSSL and wolfSSH cross-compiled for PSP, with the modern algorithms
+- [x] wolfSSL and wolfSSH cross-compiled for the PSP with the modern algorithms
       asserted at build time — `tools/build-toolchain.sh`
-- [x] A full session against a real OpenSSH from the host — curve25519-sha256,
-      ssh-ed25519, aes256-ctr, a pty and a shell — `tools/test-host.sh`
-- [x] An installable `EBOOT.PBP` that brings up Wi-Fi, connects, and runs a
-      command over a modern SSH session — `tools/build-psp.sh`
+- [x] A full session against a real OpenSSH from the host — `tools/test-host.sh`
+- [x] An installable `EBOOT.PBP` — `tools/build-psp.sh`
 - [x] **Confirmed on a PSP Go**: authenticated, shell opened, output returned
-- [ ] A terminal grid instead of the debug screen ([#4](https://github.com/cobanov/pspssh/issues/4))
-- [ ] Input: the on-screen keyboard, and whether a Bluetooth one can be paired ([#2](https://github.com/cobanov/pspssh/issues/2))
+- [x] Our own screen, so there can be a keyboard and a terminal
+- [x] Hosts added, edited and deleted on the device
+- [x] Typing, with the on-screen keyboard
+- [x] Host keys remembered, and a changed one refused
+- [ ] Public key authentication
+- [ ] Whether a Bluetooth keyboard can be paired
+      ([#2](https://github.com/cobanov/pspssh/issues/2))
 
-## How it will be built
+## Using it
 
-**Stand on a maintained SSH library, do not reimplement one.** The plan is
-[wolfSSH][wolfssh] over [wolfSSL][wolfssl], which is already packaged for the
-PSP. wolfSSH supports `curve25519-sha256`, `ssh-ed25519`, `aes256-ctr` and
-`hmac-sha2-256` — a fully modern session with nothing weakened. It lacks
-`chacha20-poly1305@openssh.com`, which costs nothing, because a current OpenSSH
-still offers AES-CTR by default and the PSP runs native code on a 333 MHz MIPS.
+### The list
 
-This is deliberately the opposite of what PSPSSH did. Vendoring a whole SSH
-program froze its cryptography at the moment of the port; depending on a
-maintained library means the algorithms can move forward.
+| | |
+|---|---|
+| **X** | connect |
+| **□** | edit |
+| **△** | delete |
+| **SELECT** | forget this server's remembered key |
+| **○** | quit |
 
-**Portable core, thin PSP front end.** The SSH and terminal logic will have no
-PSP headers in it, so it compiles for the host as well. That makes it testable
-on a laptop against a real OpenSSH server — encodings can be proved with
-vectors, a protocol cannot.
+### The terminal
 
-**Measure before designing.** The largest unknown is input: the PSP Go has no
-keyboard, no IR port (Sony removed it after the 2000) and no USB host. The
-system on-screen keyboard works but is slow, and whether a Bluetooth HID
-keyboard can be paired is unverified. A probe answers that before anything is
-designed around it.
+| | |
+|---|---|
+| **X** | type a line |
+| **□** | Enter |
+| **△** | Ctrl-C |
+| **○** | leave the session |
+| **d-pad** | arrow keys — so shell history works |
+| **SELECT** / **START** | Ctrl-D / Tab |
+| **L** / **R** | Escape / Ctrl-L |
+
+The on-screen keyboard is a modal dialog, so typing is **line at a time**: you
+compose a line and it is sent when you confirm. That suits `sh`, `ls`, `git` and
+anything else you would drive from a prompt. It does not suit `vim`, and no
+amount of work on this client will change that — the console has no way to
+deliver a keystroke as it happens.
+
+### The first connection to a server
+
+You are shown its fingerprint and asked whether to trust it, exactly as `ssh`
+does. Compare it against the server if you can:
+
+```sh
+ssh-keyscan -t ed25519 your.server | ssh-keygen -lf -
+```
+
+After that, the same key must come back every time. If it does not, the
+connection is refused and there is no button to override it — that screen is the
+only moment an interception is visible.
+
+If you genuinely rebuilt the server, select it in the list and press **SELECT**
+to forget the old key. That is deliberately not on the warning screen: a button
+next to an alarm gets pressed instead of read.
 
 ## Building
 
@@ -66,33 +118,65 @@ Needs Docker or OrbStack; no local toolchain.
 ```sh
 tools/build-toolchain.sh     # once: cross-compiles wolfSSL and wolfSSH
 tools/build-psp.sh           # -> build/psp/EBOOT.PBP
+tools/test-offline.sh        # the parsers and the storage, no hardware
 tools/test-host.sh           # the session, against a real OpenSSH, from here
 ```
 
-That cross-compiles wolfSSL and wolfSSH and bakes them into a
-`pspssh/toolchain` image. It takes a while — the pspdev image is amd64 and runs
-emulated on Apple Silicon — but it only has to happen once.
+The toolchain build takes a while — the pspdev image is amd64 and runs emulated
+on Apple Silicon — but it only has to happen once.
 
 **The packaged wolfSSL is not usable here**, which is why the script builds its
 own. `psp-pacman`'s build is configured for TLS and omits curve25519, Ed25519
 and AES-CTR; wolfSSH links against it perfectly well and then cannot negotiate
-with any current OpenSSH. The script asserts on both the resulting `options.h`
-and the algorithm strings in `libwolfssh.a`, so a missing primitive fails the
+with any current OpenSSH. The script asserts on the resulting `options.h`, on a
+compile check, and on the exported symbols, so a missing primitive fails the
 build instead of the handshake.
 
 ## Installing
 
 Copy `build/psp` to the memory card as `PSP/GAME/pspssh/` — on a PSP Go the
-internal storage is `ef0:` rather than `ms0:`. Edit `pspssh.cfg` there with the
-server to reach, and launch it from the XMB under Game.
+internal storage is `ef0:` rather than `ms0:`. Launch it from the XMB under
+Game, and add your servers from the list.
 
-The Wi-Fi profile is one you have already saved in the PSP's own network
-settings; the app selects profile 1, it does not join a network itself.
+The Wi-Fi profile is one you have already saved under **Settings › Network
+Settings**; this picks a saved connection, it does not join a network. Leave a
+host's profile at 0 and it tries each one until something works — the numbers do
+not renumber when you delete a connection, so "the only one left" is not
+reliably number 1.
 
-`pspssh.cfg` holds the password in plain text on a memory card. Anyone holding
-the console can read it, so use an account you are willing to have on a games
-machine. Key authentication and a proper prompt are both wanted, and neither is
-written yet.
+A PSP does WEP and WPA-TKIP. WPA2-AES needs the `wpa2psp` plugin on 6.61 PRO;
+on ARK CFW it is already there.
+
+### Where things are kept
+
+| | |
+|---|---|
+| `pspssh.hosts` | your servers, one per line |
+| `pspssh.known` | remembered host keys |
+| `pspssh.cfg` | the old single-server config — imported once if present, then left alone |
+
+**A stored password is plain text on a memory card.** Anyone holding the console
+can read it, so either use an account you are willing to have on a games machine
+or leave the password empty and type it each time. Public key authentication is
+wanted and not written yet.
+
+## How it is built
+
+**Stand on a maintained SSH library, do not reimplement one.** [wolfSSH][wolfssh]
+over [wolfSSL][wolfssl], built from source with the algorithms this needs.
+Vendoring a whole SSH program is what froze PSPSSH's cryptography at the moment
+of its port; depending on a maintained library means it can move forward.
+
+**Portable core, thin PSP front end.** `src/core` has no PSP headers in it and
+compiles for the host, so the protocol is exercised against a real OpenSSH from
+a laptop. Encodings can be proved with test vectors; a key exchange either
+convinces OpenSSH or it does not, and a games console with no debugger is a bad
+place to find that out.
+
+The same principle applies inside the front end. `hosts.c`, `knownhosts.c` and
+`term.c` have no hardware in them either, so 106 assertions run on a laptop —
+the storage layer, the host key check, and the escape-sequence parser. What is
+left needing a PSP is a screen, a radio and a system keyboard.
 
 ## Licence
 
@@ -103,6 +187,8 @@ wolfSSL is GPL-2.0-**or-later** — its `LICENSING` file and every source header
 say "either version 2 of the License, or (at your option) any later version" —
 so it upgrades to GPLv3 cleanly. The `GPL-2.0-only` in the PSP package metadata
 is imprecise and worth correcting upstream.
+
+The 8×8 font in `third_party/` is public domain, by Daniel Hepper.
 
 [pspssh]: https://www.gamebrew.org/wiki/PSPSSH_PSP
 [wolfssh]: https://github.com/wolfSSL/wolfssh
