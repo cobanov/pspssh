@@ -29,11 +29,13 @@ extern "C" {
  * An application that cannot tell you which build it is makes "did I copy the
  * new one across?" unanswerable without a computer — which is exactly the
  * question that comes up while iterating on a device you flash by hand. */
-#define PSPSSH_VERSION "1.3.4"
+#define PSPSSH_VERSION "1.3.5"
 
 /* Whose it is. Shown on the first screen, because a thing somebody made by
- * hand should say so. */
-#define PSPSSH_AUTHOR  "Mert Cobanov"
+ * hand should say so — and as the site rather than the name, because that is
+ * something a person reading it on a games console can actually go to. The
+ * copyright headers keep the name; this is a byline, not a licence. */
+#define PSPSSH_AUTHOR  "cobanov.dev"
 
 /* Enough for "SHA256:" and a 43-character base64 digest. */
 #define PSPSSH_FINGERPRINT_LEN 64
