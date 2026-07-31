@@ -35,6 +35,9 @@ struct pspssh_session {
     pspssh_hostkey_fn on_hostkey;
     void *hostkey_ctx;
 
+    pspssh_wait_fn on_wait;
+    void *wait_ctx;
+
     const char *password;
 
     /* Set when the host key was refused, so a generic wolfSSH failure can be
@@ -253,6 +256,8 @@ pspssh_session *pspssh_open(const pspssh_config *config, char *err, size_t err_l
     s->send = config->send;
     s->on_hostkey = config->on_hostkey;
     s->hostkey_ctx = config->hostkey_ctx;
+    s->on_wait = config->on_wait;
+    s->wait_ctx = config->wait_ctx;
     s->password = config->password;
 
     s->ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
@@ -342,11 +347,43 @@ pspssh_session *pspssh_open(const pspssh_config *config, char *err, size_t err_l
         goto failed;
     }
 
-    do {
-        ret = wolfSSH_connect(s->ssh);
-    } while (ret != WS_SUCCESS
-             && (wolfSSH_get_error(s->ssh) == WS_WANT_READ
-                 || wolfSSH_get_error(s->ssh) == WS_WANT_WRITE));
+    /* Retry until the far side has said enough, yielding in between.
+     *
+     * The yield is the load-bearing part. This loop spins whenever the socket
+     * has nothing yet, and on a cooperative scheduler a spin that never gives
+     * the processor up can starve the thread delivering the bytes it is
+     * waiting for — so it waits forever for something it is itself preventing.
+     * That is a frozen screen on a handheld and an invisible wasted core on a
+     * desktop, which is why it survived the host tests.
+     *
+     * The bound exists for the same reason: a handshake that is never going to
+     * finish should say so rather than look like one still in progress. */
+    {
+        int budget = config->handshake_timeout_ms > 0
+                     ? config->handshake_timeout_ms : 30000;
+        /* Each turn is one attempt plus roughly a millisecond of waiting. */
+        int turns = budget;
+
+        do {
+            ret = wolfSSH_connect(s->ssh);
+            if (ret == WS_SUCCESS) {
+                break;
+            }
+            if (wolfSSH_get_error(s->ssh) != WS_WANT_READ
+                    && wolfSSH_get_error(s->ssh) != WS_WANT_WRITE) {
+                break;
+            }
+            if (s->on_wait != NULL) {
+                s->on_wait(s->wait_ctx);
+            }
+        } while (--turns > 0);
+
+        if (ret != WS_SUCCESS && turns <= 0) {
+            snprintf(s->error, sizeof(s->error),
+                     "the handshake did not finish within %d ms", budget);
+            goto failed;
+        }
+    }
 
     if (ret != WS_SUCCESS) {
         if (!s->hostkey_refused) {
