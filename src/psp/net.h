@@ -22,7 +22,7 @@
  * and a still screen is indistinguishable from a crash.
  *
  * Returns 1 once there is an address, 0 otherwise. Does nothing and succeeds if
- * the network is already up. */
+ * the network is still up, and joins again if it has dropped since. */
 int net_start(int preferred);
 
 /* Resolves and connects. Returns a socket, or -1 with the reason on the
@@ -30,6 +30,9 @@ int net_start(int preferred);
 int net_connect(const char *host, int port);
 
 /* The two callbacks the session core is given. `io` is a pointer to the socket.
+ *
+ * Neither waits: net_recv returns 0 at once when nothing has arrived, so the
+ * caller decides how long to wait and can count it.
  *
  * The socket is left blocking and readiness is decided with select(). The
  * obvious alternative, setsockopt(SO_NONBLOCK), does nothing on this platform:
