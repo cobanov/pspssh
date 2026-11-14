@@ -2,28 +2,24 @@
 # Build the PSP front end into an installable EBOOT.PBP.
 #
 #   tools/build-psp.sh      -> build/psp/EBOOT.PBP
-#                          (+ a starter pspssh.cfg, if there is not one)
 #
 # Runs inside the toolchain image from tools/build-toolchain.sh, so no local PSP
 # toolchain is needed. Build that first if you have not.
 #
 # ## Installing
 #
-# Copy the whole build/psp directory to the memory card as:
+# Copy build/psp/EBOOT.PBP to the memory card as:
 #
-#     ms0:/PSP/GAME/pspssh/
+#     ms0:/PSP/GAME/pspssh/EBOOT.PBP
 #
-# On a PSP Go the internal storage is ef0: instead, so:
-#
-#     ef0:/PSP/GAME/pspssh/
-#
-# Then edit pspssh.cfg on the card with the server to reach, and launch it from
-# the XMB under Game > Memory Stick.
+# On a PSP Go the internal storage is ef0: instead. Launch it from the XMB under
+# Game, and add servers on the first screen.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-IMAGE=pspssh/toolchain:latest
+. tools/versions.sh
+IMAGE=$TOOLCHAIN_IMAGE
 
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.orbstack/run/docker.sock}"
 DOCKER_CONFIG="$(mktemp -d)"; export DOCKER_CONFIG

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build wolfSSL and wolfSSH for the PSP and bake them into a toolchain image.
 #
-#   tools/build-toolchain.sh     -> pspssh/toolchain:latest
+#   tools/build-toolchain.sh     -> pspssh/toolchain:<versions>, see versions.sh
 #
 # Everything happens inside the container. Nothing is installed on the host and
 # no local toolchain is needed beyond Docker.
@@ -25,9 +25,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-WOLFSSL_VERSION=5.7.0
-WOLFSSH_VERSION=1.5.0
-IMAGE=pspssh/toolchain:latest
+. tools/versions.sh
+IMAGE=$TOOLCHAIN_IMAGE
 
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.orbstack/run/docker.sock}"
 DOCKER_CONFIG="$(mktemp -d)"; export DOCKER_CONFIG
@@ -36,7 +35,7 @@ printf '{}' > "$DOCKER_CONFIG/config.json"
 trap 'rm -rf "$DOCKER_CONFIG" "$BUILD_DIR"' EXIT
 
 cat > "$BUILD_DIR/Dockerfile" <<EOF
-FROM pspdev/pspdev:latest
+FROM ${PSPDEV_IMAGE}
 
 # util-linux is for colrm, which wolfSSL's configure uses to generate its
 # options header and which busybox does not provide. coreutils gives it a cut
@@ -48,6 +47,7 @@ WORKDIR /build
 # ---------------------------------------------------------------- wolfSSL ---
 RUN curl -fsSL -o wolfssl.tar.gz \\
       https://github.com/wolfSSL/wolfssl/archive/refs/tags/v${WOLFSSL_VERSION}-stable.tar.gz \\
+    && echo "${WOLFSSL_SHA256}  wolfssl.tar.gz" | sha256sum -c - \\
     && tar xzf wolfssl.tar.gz
 
 # wolfSSL compiles with -Werror, and random.c calls the seed function without a
@@ -62,10 +62,7 @@ WORKDIR /build/wolfssl-${WOLFSSL_VERSION}-stable
 # --host puts autotools into cross-compile mode. Without it, configure runs the
 # MIPS test binaries it just built and concludes the compiler is broken.
 #
-# --enable-wolfssh is wolfSSL's own preset for the features wolfSSH needs. The
-# three primitives after it are named anyway: the preset is not documented as a
-# stable contract, and a silently missing curve25519 is the failure this whole
-# script exists to prevent.
+# The feature flags are in tools/versions.sh, shared with the host build.
 #
 # CUSTOM_RAND_GENERATE_SEED is not optional here, it is the difference between
 # working and not. A PSP has no /dev/urandom and no hardware RNG, so wolfSSL
@@ -80,36 +77,35 @@ WORKDIR /build/wolfssl-${WOLFSSL_VERSION}-stable
 # This is the one place the PSP and host builds deliberately differ. An entropy
 # source cannot be platform-neutral, and the host has a real one.
 #
-# --enable-static --disable-shared because the PSP links one binary.
-# --disable-filesystem: keys and known-hosts are ours to handle, and newlib's
-# filesystem on a PSP is not what wolfSSL expects.
+# Static because the PSP links one binary.
+#
+# WOLFSSL_NO_GETPID: wolfSSL remembers the process id so a forked child reseeds.
+# configure finds a getpid in the SDK and turns that on, and then random.c does
+# not compile, because nothing it includes declares one. A PSP cannot fork, so
+# the check is switched off rather than given a prototype.
+#
+# WOLFSSL_NO_SOCK: wolfSSL's headers otherwise reach for <sys/socket.h>, which
+# on this SDK lives under psp/sdk/include and is not on the path of a plain
+# cross-compile. Nothing here wants wolfSSL's sockets anyway — the transport is
+# two callbacks of ours — so saying so is truer than adding the path.
 RUN ./autogen.sh \\
     && ./configure \\
         --host=mipsel-unknown-elf \\
         --prefix=\${PSPDEV}/psp \\
-        --enable-static \\
-        --disable-shared \\
-        --enable-wolfssh \\
-        --enable-harden \\
-        --enable-curve25519 \\
-        --enable-ed25519 \\
-        --enable-ed25519-stream \\
-        --enable-keygen \\
-        --enable-aesctr \\
-        --enable-chacha \\
-        --enable-poly1305 \\
-        --enable-sha512 \\
-        --disable-examples \\
-        --disable-crypttests \\
-        --disable-oldtls \\
+        ${WOLFSSL_FEATURES} \\
         CC=psp-gcc AR=psp-ar RANLIB=psp-ranlib \\
         CFLAGS="-G0 -O2 -DWOLFSSL_USER_IO -DNO_WRITEV -DNO_WOLFSSL_DIR -DSINGLE_THREADED \\
+                -DWOLFSSL_NO_GETPID -DWOLFSSL_NO_SOCK \\
                 -DCUSTOM_RAND_GENERATE_SEED=pspssh_generate_seed \\
                 -include /build/pspssh_seed.h" \\
     && make -j"\$(nproc)" \\
     && make install
 
 # Fail loudly here rather than at a handshake on the device.
+#
+# WOLFSSL_NO_GETPID is here for a different reason from the rest: it changes
+# the layout of WC_RNG, so it has to reach options.h or the application and the
+# library would disagree about the size of a structure one puts on the stack.
 #
 # Only macros that configure actually writes into options.h belong in this list.
 # HAVE_ED25519_KEY_IMPORT and _EXPORT do not: settings.h derives them from
@@ -118,7 +114,7 @@ RUN ./autogen.sh \\
 # because it evaluates every header together the way the real build does.
 RUN set -e; \\
     for s in HAVE_CURVE25519 HAVE_ED25519 WOLFSSL_ED25519_STREAMING_VERIFY \\
-             WOLFSSL_AES_COUNTER HAVE_CHACHA HAVE_POLY1305; do \\
+             WOLFSSL_AES_COUNTER HAVE_CHACHA HAVE_POLY1305 WOLFSSL_NO_GETPID; do \\
         grep -qE "^#define \$s\b" \${PSPDEV}/psp/include/wolfssl/options.h \\
             || { echo "wolfSSL built without \$s — SSH would fail to negotiate"; exit 1; }; \\
         echo "  wolfSSL: \$s"; \\
@@ -128,6 +124,7 @@ RUN set -e; \\
 WORKDIR /build
 RUN curl -fsSL -o wolfssh.tar.gz \\
       https://github.com/wolfSSL/wolfssh/archive/refs/tags/v${WOLFSSH_VERSION}-stable.tar.gz \\
+    && echo "${WOLFSSH_SHA256}  wolfssh.tar.gz" | sha256sum -c - \\
     && tar xzf wolfssh.tar.gz
 
 WORKDIR /build/wolfssh-${WOLFSSH_VERSION}-stable
@@ -159,6 +156,12 @@ WORKDIR /build/wolfssh-${WOLFSSH_VERSION}-stable
 # hands it to callbacks we register, so wolfSSH becomes pure protocol on a byte
 # stream and the transport belongs to us. That is what lets the same library run
 # over a PSP socket and a host socket without knowing the difference.
+#
+# ac_cv_lib_wolfssl_wolfCrypt_Init answers a question configure cannot ask here.
+# It checks for wolfSSL by linking a program against it, and that link needs
+# pspssh_generate_seed, which lives in the application and does not exist yet.
+# The library was installed by the step above; whether it has what SSH needs is
+# what the checks after this one establish.
 RUN ./autogen.sh \\
     && ./configure \\
         --host=mipsel-unknown-elf \\
@@ -168,9 +171,10 @@ RUN ./autogen.sh \\
         --disable-shared \\
         --disable-examples \\
         CC=psp-gcc AR=psp-ar RANLIB=psp-ranlib \\
-        CFLAGS="-G0 -O2 -DNO_TERMIOS -DWOLFSSH_USER_IO" \\
+        CFLAGS="-G0 -O2 ${WOLFSSH_CFLAGS}" \\
         LDFLAGS="-L\${PSPDEV}/psp/lib" \\
         LIBS="-lwolfssl" \\
+        ac_cv_lib_wolfssl_wolfCrypt_Init=yes \\
     && make -j"\$(nproc)" \\
     && make install
 
@@ -200,7 +204,7 @@ RUN printf '%s\\n' \\
         '#endif' \\
         'int main(void) { return 0; }' \\
         > /tmp/algo_check.c \\
-    && psp-gcc -G0 -DNO_TERMIOS -DWOLFSSH_USER_IO \\
+    && psp-gcc -G0 ${WOLFSSH_CFLAGS} \\
         -I\${PSPDEV}/psp/include \\
         -I/build/wolfssh-${WOLFSSH_VERSION}-stable \\
         -c /tmp/algo_check.c -o /tmp/algo_check.o \\

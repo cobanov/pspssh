@@ -377,3 +377,36 @@ address to the bridge — so its log could not tell a PSP from a laptop, and
 `tools/wire-probe.py` listens on the host instead, shows the real peer, and
 dumps every byte with a timestamp. Its proxy mode forwards to the real server
 while logging, which is what produced the capture above.
+
+## 9. Moving the libraries forward, and what that took
+
+The build started on wolfSSL 5.7.0 and wolfSSH 1.5.0 and sat there, which is
+the first step of the thing §1 warns about. It is on 5.9.4 and 1.6.0 now, and
+the versions live in `tools/versions.sh` so the PSP build and the laptop build
+cannot drift apart. Three things changed between the two that a cross-compile
+for this console has to answer, and each failed the build rather than the
+device:
+
+1. **wolfSSL remembers its process id**, so a forked child reseeds. configure
+   finds a `getpid` in the SDK and switches that on, and `random.c` then fails
+   to compile because nothing it includes declares one. A PSP cannot fork:
+   `WOLFSSL_NO_GETPID`. It changes the layout of `WC_RNG`, so the toolchain
+   script checks that it reached `options.h`.
+2. **wolfSSL's headers reach for `<sys/socket.h>`** even with
+   `WOLFSSL_USER_IO`. The SDK has one, under `psp/sdk/include`, which is not on
+   the path of a plain cross-compile. The transport is ours anyway:
+   `WOLFSSL_NO_SOCK`.
+3. **wolfSSH's configure looks for wolfSSL by linking against it**, and that
+   link now pulls in the random number generator, which needs
+   `pspssh_generate_seed` — a function that lives in the application. The
+   check is answered for it (`ac_cv_lib_wolfssl_wolfCrypt_Init=yes`) and the
+   assertions after the build do the real checking.
+
+wolfSSH 1.6.0 also adds strict key exchange, the Terrapin mitigation. This
+client was not exposed — that attack needs ChaCha20-Poly1305 or a CBC cipher
+with an encrypt-then-MAC, and the one pinned here is `aes256-ctr` with
+`hmac-sha2-256` — but it is the kind of fix that only arrives if the library
+can be moved.
+
+The laptop suite was run against a real OpenSSH on the new versions before the
+PSP build was made. The new libraries have not yet run on a console.
