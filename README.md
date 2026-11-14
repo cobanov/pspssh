@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="https://github.com/cobanov/pspssh/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/cobanov/pspssh?color=004aad&labelColor=1a1a1a"></a>
-  <img alt="tests" src="https://img.shields.io/badge/tests-122%20offline%20%2B%206%20live-004aad?labelColor=1a1a1a">
+  <img alt="tests" src="https://img.shields.io/badge/tests-137%20offline%20%2B%2012%20live-004aad?labelColor=1a1a1a">
   <img alt="hardware" src="https://img.shields.io/badge/PSP%20Go-confirmed-004aad?labelColor=1a1a1a">
   <a href="LICENSE"><img alt="licence" src="https://img.shields.io/badge/licence-GPL--3.0--or--later-004aad?labelColor=1a1a1a"></a>
 </p>
@@ -26,7 +26,7 @@ all.
 Add your servers on the console, pick one, get a shell.
 
 ```
- pspssh                                     v2.0.0  cobanov.dev
+ pspssh                                     v2.2.0  cobanov.dev
 
    pve                     bb@192.168.8.45:2222
  > macmini                 mert@192.168.1.20:22
@@ -41,9 +41,11 @@ Add your servers on the console, pick one, get a shell.
   keyboard. No memory card shuffling.
 - **Host keys are remembered.** Trust on first use; a changed key is refused,
   not warned about.
-- **An 80-column terminal** with colour, cursor addressing and scroll regions.
+- **An 80-column terminal** with cursor addressing and scroll regions. 256 and
+  24-bit colour are folded onto the sixteen the screen has, so a coloured
+  prompt stays coloured.
 - **Passwords are optional** — leave one out and it is asked for at connect
-  time, then wiped.
+  time, then wiped. A wrong one is tried once, not until the server hangs up.
 
 Confirmed on a **PSP Go (N1000)** on custom firmware. Not yet implemented:
 public key authentication.
@@ -67,11 +69,16 @@ there on ARK.
 
 Leave a host's profile at `0` and it tries each saved connection until one
 works. Worth doing: deleting a connection does not renumber the rest, so "the
-only one left" is not reliably number 1.
+only one left" is not reliably number 1. If the connection drops — the console
+slept, the WLAN switch moved — the next connect joins again.
 
 Your servers live in `pspssh.hosts` beside the binary and remembered keys in
 `pspssh.known`. Both survive an upgrade. A `pspssh.cfg` from an older version is
 imported once and then left alone.
+
+If either file cannot be read when the application starts, it says so and then
+refuses to save over it — one bad read off a worn card does not cost the whole
+list. Quit, check the card, start again.
 
 > **A stored password is plain text on a memory card.** Anyone holding the
 > console can read it. Use an account you are willing to have on a games
@@ -133,15 +140,26 @@ Needs Docker or OrbStack; no local toolchain.
 tools/build-toolchain.sh     # once: cross-compiles wolfSSL and wolfSSH
 tools/build-psp.sh           # -> build/psp/EBOOT.PBP
 tools/test-offline.sh        # parsers and storage, no hardware needed
-tools/test-host.sh           # the session, against a real OpenSSH
+tools/test-host.sh           # the session, against a real OpenSSH it starts
+tools/release.sh 2.2.0       # tests, a build from a fresh clone, tag, upload
 ```
 
-The toolchain step takes a while — the pspdev image is amd64 and runs emulated
-on Apple Silicon — but only happens once. It builds wolfSSL from source because
-the packaged one is configured for TLS and omits curve25519, Ed25519 and
-AES-CTR; wolfSSH links against it happily and then cannot negotiate with
-anything. The script asserts on the result, so a missing primitive fails the
-build rather than the handshake.
+The toolchain step takes a few minutes — the pspdev image is amd64 and runs
+emulated on Apple Silicon — and happens once per set of library versions. It
+builds wolfSSL from source because the packaged one is configured for TLS and
+omits curve25519, Ed25519 and AES-CTR; wolfSSH links against it happily and
+then cannot negotiate with anything. The script asserts on the result, so a
+missing primitive fails the build rather than the handshake.
+
+The library versions, their checksums and the SDK image are in
+`tools/versions.sh`, read by both the PSP build and the laptop one. Moving to a
+newer wolfSSL or wolfSSH is that file and a run of `tools/test-host.sh`.
+
+`tools/test-host.sh` needs nothing running: it starts an OpenSSH server inside
+its own container, connects the session core to it, and then reads the server's
+log — which is how "a wrong password is one failed login" and "a refused host
+key sends no password" are checked from the side that counts. Give it a host,
+port, user and password to run against a server of yours instead.
 
 Artwork in `assets/` is packed into the `EBOOT.PBP` when present — `ICON0.PNG`
 (144×80), `PIC1.PNG` (480×272), and the rest of the XMB slots. See
@@ -159,9 +177,9 @@ a laptop — a key exchange either convinces OpenSSH or it does not, and a games
 console with no debugger is a bad place to find out.
 
 The same applies inside the front end: `hosts.c`, `knownhosts.c`, `term.c` and
-`console.c` have no hardware in them, so **122 assertions run on a laptop**
-covering the storage layer, the host key check, the escape-sequence parser and
-the boot log. What genuinely needs a PSP is a screen, a radio and a keyboard.
+`console.c` have no hardware in them, so the storage layer, the host key check,
+the escape-sequence parser and the boot log are all tested on a laptop. What
+genuinely needs a PSP is a screen, a radio and a keyboard.
 
 [docs/RESEARCH.md](docs/RESEARCH.md) records what decided the stack.
 
