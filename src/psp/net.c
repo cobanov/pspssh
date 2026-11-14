@@ -181,7 +181,18 @@ int net_start(int preferred)
     int chosen = -1;
 
     if (connected) {
-        return 1;
+        int state = 0;
+
+        /* Asked rather than remembered. The association does not survive the
+         * console sleeping or the WLAN switch going off and on, and a flag set
+         * once would go on saying "connected" to every attempt after that —
+         * each of which then fails as "the server could not be reached", with
+         * no way back short of restarting the application. */
+        if (sceNetApctlGetState(&state) == 0 && state == 4) {
+            return 1;
+        }
+        connected = 0;
+        console_printf("  the wi-fi connection was lost. joining again.\n\n");
     }
 
     if (!stack_started) {
@@ -201,7 +212,7 @@ int net_start(int preferred)
     count = list_profiles(available, 10);
     if (count == 0) {
         console_printf("  no saved wi-fi connections.\n");
-        console_printf("  create one under Settings > Network Settings first —\n");
+        console_printf("  create one under Settings > Network Settings first.\n");
         console_printf("  this picks a saved connection, it does not join a\n");
         console_printf("  network by itself.\n");
         return 0;
@@ -301,26 +312,30 @@ int net_connect(const char *host, int port)
     addr.sin_addr = resolved;
 
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        console_printf("  %s:%d refused the connection (%d)\n", host, port, errno);
+        console_printf("  could not connect to %s:%d (%d)\n", host, port, errno);
         close(fd);
         return -1;
     }
     return fd;
 }
 
-/* Whether the socket has something, without committing to waiting for it. See
- * the note in net.h on why this is select() and not a non-blocking socket. */
-static int wait_readable(int fd, int milliseconds)
+/* Whether the socket has something, without waiting for it. See the note in
+ * net.h on why this is select() and not a non-blocking socket.
+ *
+ * A zero timeout, so this asks once and returns. It used to wait fifty
+ * milliseconds, which broke two things that both assume it does not wait: the
+ * handshake counts one millisecond a turn, so its thirty-second limit took
+ * twenty-five minutes to arrive, and the terminal reads once a frame, so it ran
+ * at fifteen frames a second. Every caller already yields on its own — the
+ * handshake through its wait callback, the terminal at the vertical blank. */
+static int readable(int fd)
 {
-    fd_set readable;
-    struct timeval timeout;
+    fd_set set;
+    struct timeval now = { 0, 0 };
 
-    FD_ZERO(&readable);
-    FD_SET(fd, &readable);
-    timeout.tv_sec = milliseconds / 1000;
-    timeout.tv_usec = (milliseconds % 1000) * 1000;
-
-    return select(fd + 1, &readable, NULL, NULL, &timeout) > 0;
+    FD_ZERO(&set);
+    FD_SET(fd, &set);
+    return select(fd + 1, &set, NULL, NULL, &now) > 0;
 }
 
 int net_recv(void *io, void *buf, unsigned int len)
@@ -328,7 +343,7 @@ int net_recv(void *io, void *buf, unsigned int len)
     int fd = *(int *)io;
     int n;
 
-    if (!wait_readable(fd, 50)) {
+    if (!readable(fd)) {
         return 0;                       /* nothing yet, not a failure */
     }
     n = recv(fd, buf, len, 0);

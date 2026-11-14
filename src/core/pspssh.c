@@ -46,10 +46,7 @@ struct pspssh_session {
     void *wait_ctx;
 
     const char *password;
-
-    /* Set when the host key was refused, so a generic wolfSSH failure can be
-     * reported as the specific thing that actually happened. */
-    int hostkey_refused;
+    int password_offered;
 
     char error[PSPSSH_ERROR_LEN];
 };
@@ -186,19 +183,16 @@ static int hostkey_check(const byte *key, word32 key_len, void *ctx)
     if (s->on_hostkey == NULL) {
         /* No policy supplied is not the same as "accept anything". A caller
          * that forgot to decide must not silently get trust on first sight. */
-        s->hostkey_refused = 1;
         set_error(s, "no host key policy was supplied, so the key was refused");
         return WS_PUBKEY_REJECTED_E;
     }
 
     if (fingerprint_of(key, key_len, fingerprint, sizeof(fingerprint)) != 0) {
-        s->hostkey_refused = 1;
         set_error(s, "the server's host key could not be fingerprinted");
         return WS_PUBKEY_REJECTED_E;
     }
 
     if (!s->on_hostkey(s->hostkey_ctx, fingerprint, key, key_len)) {
-        s->hostkey_refused = 1;
         set_error(s, "the host key was refused");
         return WS_PUBKEY_REJECTED_E;
     }
@@ -216,6 +210,16 @@ static int user_auth(byte type, WS_UserAuthData *data, void *ctx)
         if (s->password == NULL) {
             return WOLFSSH_USERAUTH_FAILURE;
         }
+        /* Offered once. wolfSSH comes back here every time the server says no,
+         * and handing over the same password again would repeat a typo until
+         * the server hung up: six failed logins for one mistake, which is
+         * enough to get an address banned, and an error at the end that names
+         * the disconnection rather than the password. */
+        if (s->password_offered) {
+            set_error(s, "the server refused the password");
+            return WOLFSSH_USERAUTH_FAILURE;
+        }
+        s->password_offered = 1;
         data->sf.password.password = (byte *)s->password;
         data->sf.password.passwordSz = (word32)strlen(s->password);
         return WOLFSSH_USERAUTH_SUCCESS;
@@ -407,8 +411,10 @@ pspssh_session *pspssh_open(const pspssh_config *config, char *err, size_t err_l
     }
 
     if (ret != WS_SUCCESS) {
-        if (!s->hostkey_refused) {
-            /* wolfSSH's own words: it knows which stage failed and we do not. */
+        if (s->error[0] == '\0') {
+            /* wolfSSH's own words: it knows which stage failed and we do not.
+             * Only when nothing more specific was said on the way here — a
+             * refused host key or password has already been named. */
             snprintf(s->error, sizeof(s->error), "%s",
                      wolfSSH_ErrorToName(wolfSSH_get_error(s->ssh)));
         }
@@ -442,7 +448,9 @@ int pspssh_read(pspssh_session *session, void *buf, unsigned int len)
         return n;
     }
     if (n == 0) {
-        return -1;      /* clean EOF is still the end of the session */
+        /* A clean EOF is still the end of the session. */
+        set_error(session, "the server closed the session");
+        return -1;
     }
 
     switch (wolfSSH_get_error(session->ssh)) {

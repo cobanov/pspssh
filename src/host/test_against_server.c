@@ -26,7 +26,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sys/time.h>
+#include <time.h>
 
 static int passed;
 static int failed;
@@ -44,11 +44,17 @@ static void check(const char *name, int condition)
 
 /* ------------------------------------------------------------ transport -- */
 
+/* Returns at once, as the PSP's does: nothing waiting is 0, and the session's
+ * wait callback is the only place time is spent. A recv that waited would make
+ * every turn of the handshake longer than the millisecond it is counted as. */
 static int sock_recv(void *io, void *buf, unsigned int len)
 {
     int fd = *(int *)io;
-    ssize_t n = recv(fd, buf, len, 0);
+    ssize_t n = recv(fd, buf, len, MSG_DONTWAIT);
 
+    if (n == 0) {
+        return -1;                      /* orderly close is still the end */
+    }
     if (n < 0) {
         /* The session treats 0 as "nothing yet" rather than as an error, which
          * is what keeps a quiet server from looking like a dead one. */
@@ -103,16 +109,8 @@ static int connect_to(const char *host, const char *port)
         /* A terminal sends single keystrokes; waiting to coalesce them is the
          * difference between a responsive session and a maddening one. */
         int one = 1;
-        struct timeval timeout;
 
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-
-        /* Bounded rather than blocking forever: a test that hangs tells you
-         * nothing, and the session's callbacks report a timeout as "nothing
-         * yet", which is exactly right during a handshake. */
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 200 * 1000;
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     }
     return fd;
 }
@@ -150,6 +148,125 @@ static int accept_hostkey(void *ctx, const char *fingerprint,
     /* Trust on first use, because this is a test against a server we own.
      * A client must ask a person; see the host key policy in the front end. */
     return 1;
+}
+
+static int refuse_hostkey(void *ctx, const char *fingerprint,
+                          const unsigned char *key, unsigned int key_len)
+{
+    (void)ctx; (void)fingerprint; (void)key; (void)key_len;
+    return 0;
+}
+
+/* ------------------------------------------------------- the ways it fails -- */
+
+static long now_ms(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* Opens a session that is expected not to open, and returns why it did not.
+ * An empty string means it opened, which every caller counts as a failure. */
+static const char *refusal(int fd, const char *user, const char *password,
+                           pspssh_hostkey_fn on_hostkey, int timeout_ms)
+{
+    static char err[PSPSSH_ERROR_LEN];
+    pspssh_config config;
+    pspssh_session *session;
+
+    memset(&config, 0, sizeof(config));
+    config.user = user;
+    config.password = password;
+    config.io = &fd;
+    config.recv = sock_recv;
+    config.send = sock_send;
+    config.on_hostkey = on_hostkey;
+    config.on_wait = yield_briefly;
+    config.handshake_timeout_ms = timeout_ms;
+
+    err[0] = '\0';
+    session = pspssh_open(&config, err, sizeof(err));
+    if (session != NULL) {
+        pspssh_close(session);
+        err[0] = '\0';
+    }
+    close(fd);
+    printf("        it said: %s\n", err[0] ? err : "(nothing — it opened)");
+    return err;
+}
+
+/* A server that accepts the connection and then says nothing, which is what a
+ * wrong port or a dropped link looks like from here. Made in this process, so
+ * it needs nothing installed: a listening socket completes the connection by
+ * itself and nobody ever reads from it. */
+static int connect_to_silence(int *listener)
+{
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    int fd;
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    *listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (*listener < 0
+            || bind(*listener, (struct sockaddr *)&addr, sizeof(addr)) != 0
+            || listen(*listener, 1) != 0
+            || getsockname(*listener, (struct sockaddr *)&addr, &len) != 0) {
+        return -1;
+    }
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0 || connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        return -1;
+    }
+    return fd;
+}
+
+static void test_the_ways_it_fails(const char *host, const char *port,
+                                   const char *user, const char *password)
+{
+    const char *why;
+    int listener = -1;
+    int fd;
+    long started;
+
+    /* The refusal is the whole of the host key check: if a "no" from the
+     * callback did not end the connection, everything the front end does to
+     * remember keys would be decoration. tools/test-host.sh then confirms from
+     * the server's log that no password followed it. */
+    fd = connect_to(host, port);
+    why = fd >= 0 ? refusal(fd, user, password, refuse_hostkey, 30000) : "";
+    check("a refused host key ends the connection, and says so",
+          strstr(why, "host key was refused") != NULL);
+
+    /* One wrong password is one failed login. Offered again each time the
+     * server said no, it was six, and the error named the disconnection. */
+    fd = connect_to(host, port);
+    why = fd >= 0 ? refusal(fd, user, "not-the-password", accept_hostkey, 30000)
+                  : "";
+    check("a wrong password is refused, and says so",
+          strstr(why, "refused the password") != NULL);
+
+    /* The limit is counted in milliseconds the wait callback reports, so it is
+     * only a limit if a turn of the loop takes about what it reports. */
+    fd = connect_to_silence(&listener);
+    started = now_ms();
+    why = fd >= 0 ? refusal(fd, user, password, accept_hostkey, 300) : "";
+    check("a server that never speaks is given up on",
+          strstr(why, "did not finish") != NULL);
+    check("and within the time it was given, not a multiple of it",
+          now_ms() - started < 3000);
+    if (listener >= 0) {
+        close(listener);
+    }
+
+    /* The key blob the assertions below look at must be the one from the
+     * session that follows, not from the wrong-password attempt above. */
+    key_blob_len = 0;
+    seen_fingerprint[0] = '\0';
 }
 
 /* ------------------------------------------------------------------ main -- */
@@ -256,6 +373,8 @@ int main(int argc, char **argv)
         printf("  FAIL  the library initialises\n");
         return 1;
     }
+
+    test_the_ways_it_fails(host, port, user, password);
 
     fd = connect_to(host, port);
     check("a socket reaches the server", fd >= 0);
