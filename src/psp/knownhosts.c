@@ -34,6 +34,11 @@ static known_entry entries[KNOWN_MAX];
 static int count;
 static char last_error[96];
 
+/* Set when the file is there and could not be read. Nothing is written until a
+ * load has succeeded: saving the one key learned since would replace every key
+ * that was in the file. */
+static int unreadable;
+
 static void fail(const char *message)
 {
     strncpy(last_error, message, sizeof(last_error) - 1);
@@ -81,6 +86,11 @@ static int save(void)
     static char text[FILE_MAX];
     int at = 0;
     int i;
+
+    if (unreadable) {
+        fail("not saved: the keys on the card could not be read");
+        return -1;
+    }
 
     for (i = 0; i < count; i++) {
         int len = snprintf(text + at, sizeof(text) - (size_t)at, "%s\t%d\t%s\n",
@@ -151,13 +161,13 @@ int knownhosts_load(void)
 {
     static char buffer[FILE_MAX];
     int len;
-    char *line;
 
     count = 0;
     last_error[0] = '\0';
 
     len = cardfile_read(KNOWN_PATH, buffer, sizeof(buffer) - 1);
-    if (len == -2) {
+    unreadable = (len == -2);
+    if (unreadable) {
         fail(cardfile_error());
         return -1;
     }
@@ -165,19 +175,7 @@ int knownhosts_load(void)
         return 0;
     }
 
-    line = buffer;
-    while (*line != '\0') {
-        char *end = line;
-
-        while (*end != '\0' && *end != '\n' && *end != '\r') {
-            end++;
-        }
-        while (*end == '\n' || *end == '\r') {
-            *end++ = '\0';
-        }
-        take_line(line);
-        line = end;
-    }
+    cardfile_each_line(buffer, take_line);
     return 0;
 }
 

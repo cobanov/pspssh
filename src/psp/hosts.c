@@ -31,6 +31,12 @@ static host_entry entries[HOSTS_MAX];
 static int count;
 static char last_error[128];
 
+/* Set when the file is there and could not be read. The list in memory is then
+ * empty, and saving it would replace every server on the card with whichever
+ * one was added next — turning one bad read into the loss it was refused to
+ * avoid. Nothing is written until a load has succeeded. */
+static int unreadable;
+
 static void fail(const char *message)
 {
     strncpy(last_error, message, sizeof(last_error) - 1);
@@ -149,6 +155,14 @@ static void take_line(char *line)
     if (found < 6) {
         return;
     }
+    /* Too long to store is dropped, not cut to fit: an address missing its end
+     * is the address of a different machine. */
+    if (strlen(fields[0]) >= sizeof(entry.name)
+            || strlen(fields[1]) >= sizeof(entry.address)
+            || strlen(fields[3]) >= sizeof(entry.user)
+            || strlen(fields[4]) >= sizeof(entry.password)) {
+        return;
+    }
 
     hosts_blank(&entry);
     copy_field(entry.name, sizeof(entry.name), fields[0]);
@@ -166,86 +180,62 @@ static void take_line(char *line)
     entries[count++] = entry;
 }
 
-static void parse(char *text)
-{
-    char *line = text;
-
-    while (*line != '\0') {
-        char *end = line;
-
-        while (*end != '\0' && *end != '\n' && *end != '\r') {
-            end++;
-        }
-        while (*end == '\n' || *end == '\r') {
-            *end++ = '\0';
-        }
-        take_line(line);
-        line = end;
-    }
-}
-
 /* ------------------------------------------------------------- legacy -- */
 
 /* The single server from pspssh.cfg, so upgrading does not lose it.
  *
  * Read once, when there is no host file yet. The old file is neither rewritten
  * nor deleted: somebody put it there by hand and it is theirs. */
+static host_entry legacy;
+
+static void take_legacy_line(char *line)
+{
+    char *eq = strchr(line, '=');
+    char *key = line;
+    char *value;
+
+    if (line[0] == '#' || eq == NULL) {
+        return;
+    }
+    *eq = '\0';
+    value = eq + 1;
+    while (*key == ' ') key++;
+    while (*value == ' ') value++;
+
+    if (strcmp(key, "host") == 0) {
+        copy_field(legacy.address, sizeof(legacy.address), value);
+    } else if (strcmp(key, "port") == 0) {
+        legacy.port = atoi(value);
+    } else if (strcmp(key, "user") == 0) {
+        copy_field(legacy.user, sizeof(legacy.user), value);
+    } else if (strcmp(key, "password") == 0) {
+        copy_field(legacy.password, sizeof(legacy.password), value);
+    } else if (strcmp(key, "profile") == 0) {
+        legacy.profile = atoi(value);
+    }
+}
+
 static void import_legacy(void)
 {
     static char buffer[FILE_MAX];
-    host_entry entry;
-    char *line;
 
     if (cardfile_read(LEGACY_PATH, buffer, sizeof(buffer) - 1) < 0) {
         return;
     }
 
-    hosts_blank(&entry);
-    line = buffer;
-    while (*line != '\0') {
-        char *end = line;
-        char *eq;
+    hosts_blank(&legacy);
+    cardfile_each_line(buffer, take_legacy_line);
 
-        while (*end != '\0' && *end != '\n' && *end != '\r') {
-            end++;
-        }
-        while (*end == '\n' || *end == '\r') {
-            *end++ = '\0';
-        }
-
-        eq = strchr(line, '=');
-        if (line[0] != '#' && eq != NULL) {
-            char *key = line;
-            char *value = eq + 1;
-
-            *eq = '\0';
-            while (*key == ' ') key++;
-            while (*value == ' ') value++;
-
-            if (strcmp(key, "host") == 0) {
-                copy_field(entry.address, sizeof(entry.address), value);
-            } else if (strcmp(key, "port") == 0) {
-                entry.port = atoi(value);
-            } else if (strcmp(key, "user") == 0) {
-                copy_field(entry.user, sizeof(entry.user), value);
-            } else if (strcmp(key, "password") == 0) {
-                copy_field(entry.password, sizeof(entry.password), value);
-            } else if (strcmp(key, "profile") == 0) {
-                entry.profile = atoi(value);
-            }
-        }
-        line = end;
+    if (legacy.port <= 0) {
+        legacy.port = 22;
     }
-
-    if (entry.port <= 0) {
-        entry.port = 22;
-    }
-    copy_field(entry.name, sizeof(entry.name), entry.address);
-    if (hosts_problem(&entry) == NULL) {
-        entries[count++] = entry;
+    copy_field(legacy.name, sizeof(legacy.name), legacy.address);
+    if (hosts_problem(&legacy) == NULL) {
+        entries[count++] = legacy;
         save();
     }
     wipe_bytes(buffer, sizeof(buffer));
+    wipe_bytes(&legacy, sizeof(legacy));
 }
 
 /* ----------------------------------------------------------------- save -- */
@@ -262,6 +252,11 @@ static int save(void)
     int at = 0;
     int i;
     int result;
+
+    if (unreadable) {
+        fail("not saved: the list on the card could not be read");
+        return -1;
+    }
 
     for (i = 0; i < count; i++) {
         int len = snprintf(text + at, sizeof(text) - (size_t)at,
@@ -298,7 +293,8 @@ int hosts_load(void)
     last_error[0] = '\0';
 
     len = cardfile_read(HOSTS_PATH, buffer, sizeof(buffer) - 1);
-    if (len == -2) {
+    unreadable = (len == -2);
+    if (unreadable) {
         fail(cardfile_error());
         return -1;
     }
@@ -309,7 +305,7 @@ int hosts_load(void)
         return 0;
     }
 
-    parse(buffer);
+    cardfile_each_line(buffer, take_line);
     wipe_bytes(buffer, sizeof(buffer));
     return 0;
 }
@@ -326,9 +322,11 @@ int hosts_add(const host_entry *entry)
         fail(hosts_problem(entry));
         return -1;
     }
-    entries[count] = *entry;
-    count++;
+    entries[count++] = *entry;
     if (save() != 0) {
+        /* Taken back out, so the list on screen is the list on the card and
+         * trying again does not add it twice. */
+        wipe_bytes(&entries[--count], sizeof(entries[0]));
         return -1;
     }
     return count - 1;

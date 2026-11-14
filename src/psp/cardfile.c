@@ -99,6 +99,24 @@ int cardfile_read(const char *path, char *buffer, int max)
     return len;
 }
 
+void cardfile_each_line(char *text, void (*take)(char *line))
+{
+    char *line = text;
+
+    while (*line != '\0') {
+        char *end = line;
+
+        while (*end != '\0' && *end != '\n' && *end != '\r') {
+            end++;
+        }
+        while (*end == '\n' || *end == '\r') {
+            *end++ = '\0';
+        }
+        take(line);
+        line = end;
+    }
+}
+
 int cardfile_write(const char *path, const char *text, int len)
 {
     char temp[64];
