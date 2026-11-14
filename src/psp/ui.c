@@ -45,27 +45,23 @@
  * a frame, with the copy that matters going first. */
 static int frame_clears = 1;
 
-void ui_frame(const char *title, const char *legend)
+void ui_title_bar(const char *title, unsigned int colour)
+{
+    /* Right-aligned by measurement rather than by a number that was correct
+     * when the byline was a different length. */
+    static const char stamp[] = "v" PSPSSH_VERSION "  " PSPSSH_AUTHOR;
+
+    gfx_fill_cells(0, 0, GFX_COLS, 1, colour);
+    gfx_puts(1, 0, title, GFX_WHITE, colour);
+    gfx_puts(GFX_COLS - (int)sizeof(stamp), 0, stamp, GFX_WHITE, colour);
+}
+
+static void ui_frame(const char *title, const char *legend)
 {
     if (frame_clears) {
         gfx_clear(GFX_BLACK);
     }
-
-    gfx_fill_cells(0, 0, GFX_COLS, 1, GFX_ACCENT);
-    gfx_printf(1, 0, GFX_WHITE, GFX_ACCENT, "%s", title);
-    /* The build and whose it is, on every screen. On a device flashed by hand
-     * the version is the answer to "did the new one copy across?", and it is
-     * only useful where it is already being looked at. */
-    /* Right-aligned by measurement rather than by a number that was correct
-     * when the byline was a different length. */
-    {
-        char stamp[40];
-        int at;
-
-        snprintf(stamp, sizeof(stamp), "v%s  %s", PSPSSH_VERSION, PSPSSH_AUTHOR);
-        at = GFX_COLS - 1 - (int)strlen(stamp);
-        gfx_puts(at < 0 ? 0 : at, 0, stamp, GFX_WHITE, GFX_ACCENT);
-    }
+    ui_title_bar(title, GFX_ACCENT);
 
     if (legend != NULL) {
         gfx_fill_cells(0, FOOTER_ROW, GFX_COLS, 1, GFX_BLACK);
@@ -261,9 +257,9 @@ static void name_from_address(void)
  * broken. Returns what osk_prompt returned, so callers can go on ignoring
  * OSK_CANCELLED and stop ignoring OSK_UNAVAILABLE. */
 static osk_result ask(const char *prompt, const char *initial,
-                      char *out, int out_len, osk_kind kind)
+                      char *out, int out_len)
 {
-    osk_result result = osk_prompt(prompt, initial, out, out_len, kind,
+    osk_result result = osk_prompt(prompt, initial, out, out_len,
                                    form_backdrop, NULL);
 
     if (result == OSK_UNAVAILABLE) {
@@ -282,33 +278,32 @@ static void edit_current_field(void)
     switch (form_field) {
     case FIELD_NAME:
         ask("a short name for this host", form.name,
-            form.name, sizeof(form.name), OSK_TEXT);
+            form.name, sizeof(form.name));
         break;
 
     case FIELD_ADDRESS:
         ask("host name or ip address", form.address,
-            form.address, sizeof(form.address), OSK_HOSTNAME);
+            form.address, sizeof(form.address));
         break;
 
     case FIELD_USER:
         ask("user name on the server", form.user,
-            form.user, sizeof(form.user), OSK_TEXT);
+            form.user, sizeof(form.user));
         break;
 
     case FIELD_PASSWORD:
         /* Never pre-filled with the stored one: the panel would show it in
          * clear text on a screen somebody else can see. An empty prompt that
          * keeps the old value when cancelled is the safer default. */
-        ask("password — leave empty to be asked each time", "",
-            form.password, sizeof(form.password), OSK_TEXT);
+        ask("password - leave empty to be asked each time", "",
+            form.password, sizeof(form.password));
         break;
 
     case FIELD_PORT: {
         char digits[8];
 
         snprintf(digits, sizeof(digits), "%d", form.port);
-        if (ask("port", digits, digits, sizeof(digits), OSK_DIGITS)
-                == OSK_ENTERED) {
+        if (ask("port", digits, digits, sizeof(digits)) == OSK_ENTERED) {
             int value = atoi(digits);
 
             /* Kept only if it is a port. Rejecting here means the save button
@@ -328,7 +323,7 @@ static void edit_current_field(void)
 
         snprintf(digits, sizeof(digits), "%d", form.profile);
         if (ask("wi-fi profile number, or 0 to try each one", digits,
-                digits, sizeof(digits), OSK_DIGITS) == OSK_ENTERED) {
+                digits, sizeof(digits)) == OSK_ENTERED) {
             int value = atoi(digits);
 
             if (value >= 0 && value <= 10) {
@@ -425,12 +420,15 @@ int ui_ask_password(const host_entry *entry, char *out, int out_len)
              entry->user, entry->address);
 
     wait_for_release();
-    if (osk_prompt(prompt, "", out, out_len, OSK_TEXT, NULL, NULL)
-            != OSK_ENTERED) {
+    switch (osk_prompt(prompt, "", out, out_len, NULL, NULL)) {
+    case OSK_ENTERED:
+        return out[0] != '\0';
+    case OSK_UNAVAILABLE:
         ui_message("the keyboard would not open", osk_failure(), GFX_RED);
         return 0;
+    default:
+        return 0;               /* backed out, which is not a fault */
     }
-    return out[0] != '\0';
 }
 
 /* ------------------------------------------------------------------ list -- */
@@ -447,7 +445,7 @@ static void draw_list(int selected, int top)
     if (count == 0) {
         gfx_puts(4, LIST_TOP + 1, "no hosts saved yet.",
                  GFX_WHITE, GFX_BLACK);
-        gfx_puts(4, LIST_TOP + 3, "press X to add one — the on-screen keyboard",
+        gfx_puts(4, LIST_TOP + 3, "press X to add one. the on-screen keyboard",
                  GFX_GREY, GFX_BLACK);
         gfx_puts(4, LIST_TOP + 4, "will ask for the address and the user name.",
                  GFX_GREY, GFX_BLACK);
@@ -556,7 +554,7 @@ int ui_host_list(void)
             snprintf(question, sizeof(question), "forget the key for \"%s\"?",
                      entry->name);
             if (ui_confirm(question,
-                           "only if you know why it changed — this is the check")
+                           "only if you know why it changed. this is the check")
                     && knownhosts_forget(entry->address, entry->port) != 0) {
                 ui_message("it could not be forgotten", knownhosts_error(),
                            GFX_RED);

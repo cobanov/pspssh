@@ -22,10 +22,15 @@
  *
  * Two things keep it honest rather than merely plausible:
  *
- * It **counts distinct deltas** and refuses to produce output if the timer
- * looks stuck. A clock too coarse to jitter would yield a pool seeded with
- * nothing, and quietly handing back predictable bytes is far worse than
- * failing — predictable bytes here mean a guessable session key.
+ * It **checks that the timings vary** and refuses to produce output if they do
+ * not: a duration has to differ from the one before it often enough, and take
+ * more than two values overall. A clock too coarse to jitter would yield a pool
+ * seeded with nothing, and quietly handing back predictable bytes is far worse
+ * than failing — predictable bytes here mean a guessable session key.
+ *
+ * That check catches a clock that is stuck or merely ticking back and forth.
+ * It does not measure how much is unpredictable in one that passes, and nothing
+ * here claims a number for that.
  *
  * It **ratchets**. After every block of output the pool is hashed forward, so
  * recovering the state later reveals nothing about what was already handed
@@ -36,6 +41,8 @@
 #include <psprtc.h>
 
 #include <string.h>
+
+#include "wipe.h"
 
 /* Before any other wolfSSL header, and the order is the point.
  *
@@ -56,11 +63,18 @@
 
 /* If fewer than this many samples differ from the one before, the clock is not
  * giving us jitter and there is nothing to build a key on. */
-#define MIN_DISTINCT 64
+#define MIN_CHANGES 64
 
-static void mix(wc_Sha256 *pool, const void *data, unsigned int len)
+/* And the durations have to take at least this many different values. Counting
+ * changes alone passes a clock that alternates between two readings, which
+ * changes every single time and says nothing. */
+#define MIN_VALUES 3
+
+/* Returns non-zero if the hash refused, so a failure cannot go by unnoticed and
+ * leave the pool short of what the caller thinks went into it. */
+static int mix(wc_Sha256 *pool, const void *data, unsigned int len)
 {
-    wc_Sha256Update(pool, (const byte *)data, len);
+    return wc_Sha256Update(pool, (const byte *)data, len);
 }
 
 /* A small amount of work whose duration the caller cannot predict exactly.
@@ -85,9 +99,11 @@ int pspssh_generate_seed(unsigned char *output, unsigned int sz)
 {
     wc_Sha256 pool;
     unsigned char block[WC_SHA256_DIGEST_SIZE];
-    u64 previous = 0;
+    u64 seen[MIN_VALUES];
     u64 delta_previous = 0;
-    int distinct = 0;
+    int changes = 0;
+    int values = 0;
+    int bad = 0;
     unsigned int filled = 0;
     int i;
 
@@ -107,12 +123,12 @@ int pspssh_generate_seed(unsigned char *output, unsigned int sz)
         void *stack_address = &pool;
         SceUID thread = sceKernelGetThreadId();
 
-        mix(&pool, &now, sizeof(now));
+        bad |= mix(&pool, &now, sizeof(now));
         if (sceRtcGetCurrentTick(&tick) == 0) {
-            mix(&pool, &tick, sizeof(tick));
+            bad |= mix(&pool, &tick, sizeof(tick));
         }
-        mix(&pool, &stack_address, sizeof(stack_address));
-        mix(&pool, &thread, sizeof(thread));
+        bad |= mix(&pool, &stack_address, sizeof(stack_address));
+        bad |= mix(&pool, &thread, sizeof(thread));
     }
 
     /* The harvest. Each round does a little work, measures how long it took,
@@ -124,6 +140,7 @@ int pspssh_generate_seed(unsigned char *output, unsigned int sz)
         u64 before = sceKernelGetSystemTimeWide();
         u64 after;
         u64 delta;
+        int k;
 
         wobble(64 + (i & 31));
         /* Yielding invites the scheduler and whatever else the console is
@@ -133,18 +150,22 @@ int pspssh_generate_seed(unsigned char *output, unsigned int sz)
         after = sceKernelGetSystemTimeWide();
         delta = after - before;
 
-        mix(&pool, &after, sizeof(after));
-        mix(&pool, &delta, sizeof(delta));
+        bad |= mix(&pool, &after, sizeof(after));
+        bad |= mix(&pool, &delta, sizeof(delta));
 
         if (i > 0 && delta != delta_previous) {
-            distinct++;
+            changes++;
         }
         delta_previous = delta;
-        previous = after;
-    }
-    (void)previous;
 
-    if (distinct < MIN_DISTINCT) {
+        for (k = 0; k < values && seen[k] != delta; k++) {
+        }
+        if (k == values && values < MIN_VALUES) {
+            seen[values++] = delta;
+        }
+    }
+
+    if (bad != 0 || changes < MIN_CHANGES || values < MIN_VALUES) {
         /* The clock is not jittering. Rather than hand back something that
          * looks random and is not, say no — a failed connection is recoverable
          * and a predictable session key is not. */
@@ -152,7 +173,7 @@ int pspssh_generate_seed(unsigned char *output, unsigned int sz)
         return -1;
     }
 
-    mix(&pool, &distinct, sizeof(distinct));
+    bad |= mix(&pool, &changes, sizeof(changes));
 
     /* Expand to the requested length, ratcheting as it goes: each block is the
      * hash of the pool, and the block is then folded back in so the next one
@@ -168,12 +189,21 @@ int pspssh_generate_seed(unsigned char *output, unsigned int sz)
         /* Hash the pool's current state without consuming it. */
         {
             u64 counter = (u64)filled;
-            wc_Sha256Update(&copy, (const byte *)&counter, sizeof(counter));
+            bad |= mix(&copy, &counter, sizeof(counter));
         }
-        wc_Sha256GetHash(&pool, block);
-        wc_Sha256Update(&copy, block, sizeof(block));
-        wc_Sha256Final(&copy, block);
+        bad |= wc_Sha256GetHash(&pool, block);
+        bad |= mix(&copy, block, sizeof(block));
+        bad |= wc_Sha256Final(&copy, block);
         wc_Sha256Free(&copy);
+
+        /* Checked before anything is handed over. A hash that failed leaves
+         * `block` holding whatever the stack had in it, and that must not
+         * become part of a key. */
+        if (bad != 0) {
+            wipe_bytes(block, sizeof(block));
+            wc_Sha256Free(&pool);
+            return -1;
+        }
 
         take = sz - filled;
         if (take > sizeof(block)) {
@@ -183,10 +213,10 @@ int pspssh_generate_seed(unsigned char *output, unsigned int sz)
         filled += take;
 
         /* Ratchet. */
-        mix(&pool, block, sizeof(block));
+        bad |= mix(&pool, block, sizeof(block));
     }
 
-    memset(block, 0, sizeof(block));
+    wipe_bytes(block, sizeof(block));
     wc_Sha256Free(&pool);
     return 0;
 }
