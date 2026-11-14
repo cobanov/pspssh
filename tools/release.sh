@@ -14,6 +14,11 @@
 #
 # The fix is not to remember harder. It is to make the mismatch impossible to
 # ship: this refuses to tag anything whose header disagrees with the tag.
+#
+# The same goes for the rest of what a release claims. The tests are run here
+# rather than assumed to have been, and the EBOOT.PBP attached to the release is
+# the one this built from the tagged commit — not one copied up afterwards from
+# whatever tree happened to be lying around.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -95,6 +100,11 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
     fail "$TAG already exists"
 fi
 
+# A release whose tests were not run is one that only might work.
+echo "==> the tests"
+tools/test-offline.sh | grep -E 'FAIL|passed' || fail "the offline tests do not pass"
+tools/test-host.sh | grep -E 'FAIL|PASS|passed' || fail "the live tests do not pass"
+
 # A release nobody can build is not a release.
 #
 # Built from a fresh clone rather than from this working tree, and that is the
@@ -105,10 +115,11 @@ fi
 #
 # The last gate rather than the first, because it is by far the slowest.
 echo "==> building from a fresh clone, because \"it compiles here\" is not the claim"
-CLONE="$(mktemp -d)"
-trap 'rm -rf "$CLONE"' EXIT
-git clone --quiet --depth 1 "file://$PWD" "$CLONE/pspssh"
-( cd "$CLONE/pspssh" && tools/build-psp.sh >/dev/null ) || fail "a fresh clone does not build"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+git clone --quiet --depth 1 "file://$PWD" "$WORK/pspssh"
+( cd "$WORK/pspssh" && tools/build-psp.sh >/dev/null ) || fail "a fresh clone does not build"
+EBOOT="$WORK/pspssh/build/psp/EBOOT.PBP"
 
 PREVIOUS="$(latest_tag)"
 echo
@@ -122,17 +133,16 @@ echo
 git tag -a "$TAG" -m "pspssh $VERSION${TITLE:+ — $TITLE}"
 git push origin "$TAG"
 
-NOTES="$(mktemp)"
-trap 'rm -f "$NOTES"' EXIT
+NOTES="$WORK/notes"
 if [ -n "$PREVIOUS" ]; then
     git log --format='- %s' "$PREVIOUS..HEAD" > "$NOTES"
 else
     echo "- the first release" > "$NOTES"
 fi
 
-gh release create "$TAG" \
+gh release create "$TAG" "$EBOOT" \
     --title "pspssh $VERSION${TITLE:+ — $TITLE}" \
     --notes-file "$NOTES"
 
 echo
-echo "==> released $TAG"
+echo "==> released $TAG, with the EBOOT.PBP built from it"
