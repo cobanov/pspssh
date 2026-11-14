@@ -14,10 +14,10 @@
 #define DEFAULT_FG 7
 #define DEFAULT_BG 0
 
-/* Eight is more than any sequence a shell emits; SGR is the only one that comes
- * close and `ESC[1;31;42m` is three. A sequence with more is truncated rather
- * than rejected, since the alternative is printing it. */
-#define MAX_PARAMS 8
+/* Sixteen holds the longest thing a shell really sends, which is SGR setting a
+ * 24-bit foreground and background together: `ESC[1;38;2;r;g;b;48;2;r;g;bm` is
+ * eleven. Parameters past the last are dropped rather than run together. */
+#define MAX_PARAMS 16
 
 enum {
     GROUND,
@@ -51,7 +51,7 @@ static int state = GROUND;
 static int params[MAX_PARAMS];
 static int param_count;
 static int param_seen;      /* distinguishes "ESC[m" from "ESC[0m" */
-static int private_marker;  /* the '?' in ESC[?25l */
+static int not_ours;        /* a marker or intermediate byte: see IN_CSI */
 
 static int bell_rang;
 
@@ -100,12 +100,11 @@ void term_reset(int c, int r)
     state = GROUND;
     param_count = 0;
     param_seen = 0;
-    private_marker = 0;
+    not_ours = 0;
     bell_rang = 0;
 }
 
 int term_cols(void) { return cols; }
-int term_rows(void) { return rows; }
 int term_cursor_col(void) { return cursor_col; }
 int term_cursor_row(void) { return cursor_row; }
 
@@ -127,11 +126,17 @@ int term_take_bell(void)
 
 /* --------------------------------------------------------------- scroll -- */
 
+/* Scrolling by more than the screen holds leaves it blank either way, so the
+ * count is capped: a parameter is allowed to say 9999, and a screenful of
+ * those would otherwise be minutes of copying rows that are already empty. */
 static void scroll_region_up(int lines)
 {
     int row;
     int i;
 
+    if (lines > rows) {
+        lines = rows;
+    }
     for (i = 0; i < lines; i++) {
         for (row = scroll_top; row < scroll_bottom; row++) {
             memcpy(grid[row], grid[row + 1], sizeof(grid[row][0]) * (size_t)cols);
@@ -145,6 +150,9 @@ static void scroll_region_down(int lines)
     int row;
     int i;
 
+    if (lines > rows) {
+        lines = rows;
+    }
     for (i = 0; i < lines; i++) {
         for (row = scroll_bottom; row > scroll_top; row--) {
             memcpy(grid[row], grid[row - 1], sizeof(grid[row][0]) * (size_t)cols);
@@ -287,6 +295,42 @@ static void insert_chars(int count)
     }
 }
 
+/* The nearest of the sixteen to a colour given as red, green and blue: one bit
+ * a channel, bright when any channel is strong. A dark grey becomes bright
+ * black rather than black, which on this background would be invisible. */
+static int nearest16(int r, int g, int b)
+{
+    int colour = (r >= 128 ? 1 : 0) | (g >= 128 ? 2 : 0) | (b >= 128 ? 4 : 0);
+
+    if (colour == 0) {
+        return (r >= 64 || g >= 64 || b >= 64) ? 8 : 0;
+    }
+    return (r >= 192 || g >= 192 || b >= 192) ? (colour | 8) : colour;
+}
+
+/* One of xterm's 256, folded onto the sixteen. The low sixteen map straight
+ * across, the 6x6x6 cube and the grey ramp go by their real colour — because
+ * losing which colour something was is what makes `ls` output unreadable. */
+static int fold256(int index)
+{
+    if (index < 16) {
+        return index;
+    }
+    if (index < 232) {
+        int r = (index - 16) / 36;
+        int g = ((index - 16) / 6) % 6;
+        int b = (index - 16) % 6;
+
+        return nearest16(r ? 55 + r * 40 : 0, g ? 55 + g * 40 : 0,
+                         b ? 55 + b * 40 : 0);
+    }
+    if (index > 255) {
+        index = 255;
+    }
+    index = 8 + (index - 232) * 10;
+    return nearest16(index, index, index);
+}
+
 static void apply_sgr(void)
 {
     int i;
@@ -324,31 +368,49 @@ static void apply_sgr(void)
             pen_fg = (p - 90) + 8;
         } else if (p >= 100 && p <= 107) {
             pen_bg = (p - 100) + 8;
-        } else if ((p == 38 || p == 48) && i + 2 < param_count
-                   && params[i + 1] == 5) {
-            /* 256-colour, folded onto the sixteen this has. The low sixteen map
-             * straight across; anything above is approximated to grey rather
-             * than dropped, because losing the distinction between "coloured"
-             * and "not" is what makes `ls` output unreadable. */
-            int colour = params[i + 2];
+        } else if (p == 38 || p == 48) {
+            /* Extended colour: `5;n` picks one of 256 and `2;r;g;b` gives one
+             * outright. Either way the numbers after it are its arguments and
+             * must be skipped as such — read as SGR codes of their own, the
+             * green of an orange prompt turns the background grey. */
+            int colour = -1;
 
-            if (colour > 15) {
-                colour = colour >= 244 ? 15 : 7;
-            }
-            if (p == 38) {
-                pen_fg = colour;
+            if (i + 2 < param_count && params[i + 1] == 5) {
+                colour = fold256(params[i + 2]);
+                i += 2;
+            } else if (i + 4 < param_count && params[i + 1] == 2) {
+                colour = nearest16(params[i + 2], params[i + 3], params[i + 4]);
+                i += 4;
             } else {
-                pen_bg = colour;
+                i = param_count;        /* cut short: nothing after it is SGR */
             }
-            i += 2;
+            if (colour >= 0) {
+                if (p == 38) {
+                    pen_fg = colour;
+                } else {
+                    pen_bg = colour;
+                }
+            }
         }
-        /* Everything else — underline, blink, 24-bit colour — is consumed. A
-         * console that cannot show it should not print its escape code. */
+        /* Everything else — underline, blink — is consumed. A console that
+         * cannot show it should not print its escape code. */
     }
 }
 
 static void dispatch_csi(unsigned char final)
 {
+    /* A sequence with a marker or an intermediate byte is a different command
+     * that happens to end in the same letter. `ESC[=5u` asks for a keyboard
+     * mode and `ESC[>4;1m` for a key-reporting one, and taken for `ESC[u` and
+     * `ESC[m` they sent the cursor to the top left and turned everything bold.
+     * Nothing this terminal implements has one, so all of them are ignored. */
+    if (not_ours) {
+        return;
+    }
+    if (param_count > MAX_PARAMS) {
+        param_count = MAX_PARAMS;
+    }
+
     switch (final) {
     case 'A': cursor_row -= param_at(0, 1); clamp_cursor(); break;
     case 'B': cursor_row += param_at(0, 1); clamp_cursor(); break;
@@ -433,7 +495,6 @@ static void dispatch_csi(unsigned char final)
          * ignoring them. */
         break;
     }
-    (void)private_marker;
 }
 
 /* ---------------------------------------------------------------- feed -- */
@@ -481,7 +542,7 @@ void term_feed(const unsigned char *data, int len)
                 state = IN_CSI;
                 param_count = 0;
                 param_seen = 0;
-                private_marker = 0;
+                not_ours = 0;
                 memset(params, 0, sizeof(params));
             } else if (ch == ']') {
                 state = IN_OSC;
@@ -527,17 +588,23 @@ void term_feed(const unsigned char *data, int len)
                 }
                 param_seen = 1;
             } else if (ch == ';') {
-                if (param_count < MAX_PARAMS) {
+                /* The first one closes an empty parameter in front of it:
+                 * `ESC[;5H` is row default, column five. One past the maximum
+                 * is where the surplus goes to be ignored. */
+                if (param_count == 0) {
+                    param_count = 1;
+                }
+                if (param_count <= MAX_PARAMS) {
                     param_count++;
                 }
                 param_seen = 1;
-            } else if (ch == '?' || ch == '>' || ch == '!') {
-                private_marker = ch;
             } else if (ch >= 0x40 && ch <= 0x7e) {
                 dispatch_csi(ch);
                 state = GROUND;
-            } else {
-                /* Intermediate bytes such as ' ' in ESC[ q. Consumed. */
+            } else if (ch >= 0x20) {
+                /* `< = > ?` in front of the parameters, or an intermediate
+                 * such as the space in `ESC[0 q`. */
+                not_ours = 1;
             }
             break;
 
