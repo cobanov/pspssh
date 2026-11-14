@@ -35,6 +35,11 @@ int cardfile_read(const char *path, char *buffer, int max);
 /* Writes `len` bytes to `path.tmp` and moves it over `path`. Returns 0. */
 int cardfile_write(const char *path, const char *text, int len);
 
+/* Cuts `text` into lines in place and hands each to `take`. Line endings of
+ * either kind are removed, and a run of them is one break. Both files here are
+ * a record a line, so this is the loop each of them would otherwise repeat. */
+void cardfile_each_line(char *text, void (*take)(char *line));
+
 /* Why the last call failed. Never NULL. */
 const char *cardfile_error(void);
 

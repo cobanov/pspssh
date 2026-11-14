@@ -175,6 +175,19 @@ int main(void)
               hosts_load() != 0);
         check("and nothing is loaded from it", hosts_count() == 0);
         check("and it says why", strstr(hosts_error(), "larger") != NULL);
+
+        /* The list in memory is empty at this point. Saving it is how one bad
+         * read becomes every server gone. */
+        {
+            host_entry one = sample("new", "new.example.org", "me", 22);
+            size_t before = strlen(read_file("pspssh.hosts"));
+
+            check("and nothing can be saved over the file that was not read",
+                  hosts_add(&one) < 0
+                      && strlen(read_file("pspssh.hosts")) == before);
+            check("nor is the refused host left in the list",
+                  hosts_count() == 0);
+        }
     }
 
     /* --- malformed lines ------------------------------------------------ */
@@ -193,6 +206,24 @@ int main(void)
         check("the good ones are the ones kept",
               strcmp(hosts_at(0)->name, "good") == 0
                   && strcmp(hosts_at(1)->name, "alsogood") == 0);
+        check("saving works again once a load has succeeded",
+              hosts_replace(0, hosts_at(0)) == 0);
+    }
+
+    /* --- a field too long to store --------------------------------------- */
+    {
+        char line[512];
+        char address[HOST_ADDRESS_LEN + 20];
+
+        memset(address, 'a', sizeof(address) - 1);
+        address[sizeof(address) - 1] = '\0';
+        snprintf(line, sizeof(line), "long\t%s\t22\tme\t\t0\n"
+                                     "fits\texample.org\t22\tme\t\t0\n", address);
+        clean();
+        write_file("pspssh.hosts", line);
+        hosts_load();
+        check("an address too long to store is dropped, not cut to fit",
+              hosts_count() == 1 && strcmp(hosts_at(0)->name, "fits") == 0);
     }
 
     /* --- the old single-server config ----------------------------------- */

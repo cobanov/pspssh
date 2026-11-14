@@ -190,6 +190,12 @@ int main(void)
               knownhosts_count() == 0);
         check("and it says why", knownhosts_error() != NULL
               && strlen(knownhosts_error()) > 0);
+        check("and nothing can be saved over the file that was not read",
+              knownhosts_remember("new.example.org", 22, FP_A) != 0);
+        clean();
+        check("saving works again once a load has succeeded",
+              knownhosts_load() == 0
+                  && knownhosts_remember("new.example.org", 22, FP_A) == 0);
     }
 
     /* --- what cannot be stored ------------------------------------------------ */
