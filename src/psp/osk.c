@@ -11,6 +11,7 @@
 #include "osk.h"
 #include "gfx.h"
 #include "pad.h"
+#include "wipe.h"
 
 #include <pspkernel.h>
 #include <pspdisplay.h>
@@ -61,23 +62,6 @@ static void from_utf16(const unsigned short *from, char *to, int max)
         i++;
     }
     to[i] = '\0';
-}
-
-/* Every field asks for an unrestricted keyboard, and `kind` now only documents
- * what the field is for.
- *
- * `inputtype` is a mask of the panels SELECT cycles between, and
- * PSP_UTILITY_OSK_INPUTTYPE_ALL is zero — no restriction. Asking for digits
- * alone, or for the URL panel, was the only place this departed from the SDK's
- * own sample, and it was the port field that would not open on hardware.
- *
- * Saving one press of SELECT is not worth a field that cannot be edited. The
- * validation that already rejects a port which is not a number is what makes
- * the restriction unnecessary rather than merely unlucky. */
-static int input_type_for(osk_kind kind)
-{
-    (void)kind;
-    return PSP_UTILITY_OSK_INPUTTYPE_ALL;
 }
 
 /* Why OSK_UNAVAILABLE came back, in words, for showing on screen.
@@ -139,7 +123,7 @@ static void drain_any_leftover(void)
 }
 
 osk_result osk_prompt(const char *prompt, const char *initial,
-                      char *out, int out_len, osk_kind kind,
+                      char *out, int out_len,
                       osk_backdrop_fn backdrop, void *backdrop_ctx)
 {
     SceUtilityOskData data;
@@ -167,7 +151,9 @@ osk_result osk_prompt(const char *prompt, const char *initial,
     data.language = PSP_UTILITY_OSK_LANGUAGE_DEFAULT;
     data.lines = 1;
     data.unk_24 = 1;
-    data.inputtype = input_type_for(kind);
+    /* Every panel, for every field — see osk.h. The validation that rejects a
+     * port which is not a number is what makes a restriction unnecessary. */
+    data.inputtype = PSP_UTILITY_OSK_INPUTTYPE_ALL;
     data.desc = desc16;
     data.intext = in16;
     data.outtextlength = OSK_MAX;
@@ -300,21 +286,19 @@ osk_result osk_prompt(const char *prompt, const char *initial,
         }
     }
 
-    if (data.result == PSP_UTILITY_OSK_RESULT_CANCELLED) {
-        return OSK_CANCELLED;
-    }
-
     /* CHANGED and UNCHANGED both mean "the user pressed confirm". UNCHANGED
      * only says they did not alter what was already there, and treating that as
      * a cancel would make confirming an unedited field wipe it. */
-    from_utf16(out16, out, out_len);
-    result = OSK_ENTERED;
+    if (data.result != PSP_UTILITY_OSK_RESULT_CANCELLED) {
+        from_utf16(out16, out, out_len);
+        result = OSK_ENTERED;
+    }
 
     /* The panel keeps whatever was typed until the next prompt overwrites it.
      * A password is the common case here, so it does not get to linger in a
-     * static buffer for the rest of the session. */
-    memset(out16, 0, sizeof(out16));
-    memset(in16, 0, sizeof(in16));
+     * static buffer for the rest of the session — cancelled or not. */
+    wipe_bytes(out16, sizeof(out16));
+    wipe_bytes(in16, sizeof(in16));
 
     return result;
 }

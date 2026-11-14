@@ -23,14 +23,6 @@
  * reason about. */
 #define OSK_MAX_TEXT 255
 
-/* What the keyboard should offer. The panel can always be switched with SELECT;
- * this only decides where it starts, which saves a press on the common case. */
-typedef enum {
-    OSK_TEXT,           /* letters, to begin with */
-    OSK_DIGITS,         /* a port or a profile number */
-    OSK_HOSTNAME        /* the URL panel: letters, digits, dots and dashes */
-} osk_kind;
-
 /* What came back. */
 typedef enum {
     OSK_ENTERED = 1,    /* the user confirmed; `out` holds what they typed */
@@ -52,15 +44,19 @@ typedef void (*osk_backdrop_fn)(void *ctx);
  * `prompt` is the caption above the panel. `initial` pre-fills it and may be
  * NULL. `out` receives the result, up to `out_len` including the terminator.
  *
+ * The panel always opens unrestricted, whatever the field is for: asking the
+ * system for digits alone was the one departure from the SDK's sample, and it
+ * was the port field that would not open on hardware.
+ *
  * On OSK_CANCELLED `out` is left exactly as it was, which is what makes
  * "cancel" mean cancel: a caller passing the current value in `initial` and the
  * same buffer as `out` keeps it. */
+osk_result osk_prompt(const char *prompt, const char *initial,
+                      char *out, int out_len,
+                      osk_backdrop_fn backdrop, void *backdrop_ctx);
+
 /* Why OSK_UNAVAILABLE came back, in words, for putting in front of a person.
  * Never NULL. */
 const char *osk_failure(void);
-
-osk_result osk_prompt(const char *prompt, const char *initial,
-                      char *out, int out_len, osk_kind kind,
-                      osk_backdrop_fn backdrop, void *backdrop_ctx);
 
 #endif /* PSPSSH_OSK_H */

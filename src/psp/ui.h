@@ -31,8 +31,11 @@ int ui_confirm(const char *question, const char *detail);
  * given, 0 if the user backed out. */
 int ui_ask_password(const host_entry *entry, char *out, int out_len);
 
-/* Paints the frame every screen here shares: title bar, footer, background.
- * Exposed because the connection progress screen wants the same furniture. */
-void ui_frame(const char *title, const char *legend);
+/* The top row every screen shares: a title on the left, and the build and whose
+ * it is on the right. The terminal draws it too, in red while the bell rings.
+ *
+ * On a device flashed by hand the version is the answer to "did the new one
+ * copy across?", and it is only useful where it is already being looked at. */
+void ui_title_bar(const char *title, unsigned int colour);
 
 #endif /* PSPSSH_UI_H */

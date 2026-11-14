@@ -29,7 +29,11 @@ void console_reset(void);
  * Presents the result before returning, so a caller printing progress does not
  * have to know the screen is double buffered. That costs a vertical blank per
  * call, which is the right trade for a log that prints tens of lines and the
- * wrong one for a terminal — which is why the terminal does not use this. */
-void console_printf(const char *fmt, ...);
+ * wrong one for a terminal — which is why the terminal does not use this.
+ *
+ * Checked by the compiler. A `%s` handed an integer is a crash, and on this
+ * device a crash is a reset with nothing on screen to say where. */
+void console_printf(const char *fmt, ...)
+    __attribute__((format(printf, 1, 2)));
 
 #endif /* PSPSSH_CONSOLE_H */

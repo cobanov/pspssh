@@ -35,6 +35,7 @@
 #include "wipe.h"
 
 #include <pspctrl.h>
+#include <pspdisplay.h>
 #include <pspkernel.h>
 
 #include <stdio.h>
@@ -116,14 +117,14 @@ static int check_hostkey(void *ctx, const char *fingerprint,
         console_printf("  expected %s\n", known);
         console_printf("  offered  %s\n", fingerprint);
         ui_message("this is not the server you connected to before",
-                   "if you rebuilt it, forget its key from the list — SELECT",
+                   "if you rebuilt it, forget its key from the list: SELECT",
                    GFX_RED);
         return 0;
     }
 
-    /* First sight. Trusted if the user says so, and remembered either way it
-     * is answered — a "no" that did not stick would ask again next time and
-     * train the answer out of them. */
+    /* First sight. Trusted and remembered if the user says so. A "no" is not
+     * remembered: nothing was learned about the server by declining, so the
+     * next attempt asks again. */
     console_printf("  host key %s\n", fingerprint);
     snprintf(line, sizeof(line), "%s:%d has not been seen before",
              host->address, host->port);
@@ -172,10 +173,10 @@ static const unsigned int palette[16] = {
 #define BELL_FRAMES 24
 static int bell_left;
 
-/* `clear` is 0 when something else has already cleared the screen — the
- * keyboard's loop does, through the graphics engine, and repeating it here
- * would be the same buffer written twice a frame. */
-static void draw_terminal(const host_entry *host, int blink, int clear)
+/* Paints every pixel it owns and clears nothing first, so the whole frame is
+ * written once. That also makes it safe behind the keyboard, whose loop has
+ * already cleared through the graphics engine. */
+static void draw_terminal(const host_entry *host, int blink)
 {
     int row;
     int col;
@@ -185,19 +186,11 @@ static void draw_terminal(const host_entry *host, int blink, int clear)
         bar = GFX_RED;
     }
 
-    if (clear) {
-        gfx_clear(GFX_BLACK);
-    }
-
-    gfx_fill_cells(0, 0, GFX_COLS, 1, bar);
-    gfx_printf(1, 0, GFX_WHITE, bar, "%s@%s", host->user, host->name);
     {
-        char stamp[40];
-        int at;
+        char title[HOST_USER_LEN + HOST_NAME_LEN + 2];
 
-        snprintf(stamp, sizeof(stamp), "v%s  %s", PSPSSH_VERSION, PSPSSH_AUTHOR);
-        at = GFX_COLS - 1 - (int)strlen(stamp);
-        gfx_puts(at < 0 ? 0 : at, 0, stamp, GFX_WHITE, bar);
+        snprintf(title, sizeof(title), "%s@%s", host->user, host->name);
+        ui_title_bar(title, bar);
     }
 
     for (row = 0; row < TERM_ROWS; row++) {
@@ -221,6 +214,9 @@ static void draw_terminal(const host_entry *host, int blink, int clear)
         }
     }
 
+    /* Two rows' worth, clamped to the screen: the legend's row and the eight
+     * pixels under it that no cell covers. */
+    gfx_fill_cells(0, GFX_ROWS - 1, GFX_COLS, 2, GFX_BLACK);
     gfx_puts(1, GFX_ROWS - 1,
              "X type  [] enter  /\\ ctrl-c  O leave  dpad arrows",
              GFX_GREY, GFX_BLACK);
@@ -235,7 +231,7 @@ static void draw_terminal(const host_entry *host, int blink, int clear)
  * is both nicer to type against and self-diagnosing. */
 static void terminal_backdrop(void *ctx)
 {
-    draw_terminal((const host_entry *)ctx, 0, 0);
+    draw_terminal((const host_entry *)ctx, 0);
 }
 
 /* Sends the whole of a short string, pumping until it is gone.
@@ -249,7 +245,9 @@ static int send_all(pspssh_session *session, const char *text, int len)
     int sent = 0;
     int spins = 0;
 
-    while (sent < len && spins < 2000) {
+    /* Ten seconds of a millisecond each. A full window reopens as soon as the
+     * far side reads, so running out means it has stopped reading. */
+    while (sent < len && spins < 10000) {
         int n = pspssh_write(session, text + sent, (unsigned int)(len - sent));
 
         if (n < 0) {
@@ -273,6 +271,8 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
     char typed[OSK_MAX_TEXT + 2];
     int frames = 0;
     int ended = 0;
+    int redraw = 1;
+    int shown_blink = -1;
     const char *ending = NULL;
 
     term_reset(GFX_COLS, TERM_ROWS);
@@ -281,6 +281,8 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
     while (!ended && !pad_exit_requested()) {
         unsigned int pressed;
         int drained = 0;
+
+        int blink = (frames / 20) % 2 == 0;
 
         /* Read until the far side is quiet or a screenful has arrived, rather
          * than once per frame. At one 512-byte read per vertical blank a
@@ -309,11 +311,26 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
             bell_left = BELL_FRAMES;
         }
 
-        draw_terminal(host, (frames / 20) % 2 == 0, 1);
-        gfx_flip();
+        /* Painted only when the picture changed: new output, the cursor
+         * blinking, the bell flashing, or a button. A shell sitting at its
+         * prompt is most of a session, and repainting a quarter of a million
+         * pixels sixty times a second to show the same thing is battery spent
+         * on nothing. The front buffer keeps what was last shown, so a skipped
+         * frame only has to wait for the blank.
+         *
+         * A missed reason to repaint would correct itself within a third of a
+         * second, when the cursor next blinks. */
+        if (redraw || drained > 0 || bell_left > 0 || blink != shown_blink) {
+            draw_terminal(host, blink);
+            gfx_flip();
+            shown_blink = blink;
+            redraw = 0;
+        } else {
+            sceDisplayWaitVblankStart();
+        }
         frames++;
-        if (bell_left > 0) {
-            bell_left--;
+        if (bell_left > 0 && --bell_left == 0) {
+            redraw = 1;         /* the bar is still red in the last one drawn */
         }
 
         if (ended) {
@@ -324,6 +341,7 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
         if (pressed == 0) {
             continue;
         }
+        redraw = 1;             /* whatever comes next may draw over this */
 
         if ((pressed & PSP_CTRL_CROSS) != 0) {
             /* The keyboard is modal, so this is line-at-a-time input. It suits
@@ -331,7 +349,7 @@ static void run_terminal(pspssh_session *session, const host_entry *host)
              * than leaving people to find out. */
             typed[0] = '\0';
             if (osk_prompt("type a line for the shell", "",
-                           typed, sizeof(typed), OSK_TEXT,
+                           typed, sizeof(typed),
                            terminal_backdrop, (void *)host) == OSK_ENTERED) {
                 int len = (int)strlen(typed);
 
@@ -441,9 +459,8 @@ static void run_session(const host_entry *chosen)
     config.on_wait = yield_briefly;
     config.handshake_timeout_ms = 30000;
     /* The shape the far side is told about, which is the screen less the title
-     * row and the key legend. Getting this right at the handshake rather than
-     * correcting it afterwards means a full-screen program never draws its
-     * first frame two lines too tall. */
+     * row and the key legend. Sent as soon as the shell is open, before anyone
+     * has typed a command that could draw to the wrong size. */
     config.columns = GFX_COLS;
     config.rows = TERM_ROWS;
 

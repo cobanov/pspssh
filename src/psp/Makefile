@@ -43,21 +43,12 @@ LIBS = -lwolfssh -lwolfssl -lm -lpspgu
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = pspssh
 
-# What the XMB shows under Information, taken from the header rather than
-# written down here.
-#
-# The version field was blank because nothing ever set APP_VER — DISC_VERSION
-# exists and is what a UMD uses, but a memory-stick title is read from APP_VER.
-# Reading both out of pspssh.h means the version on that screen, the version in
-# the banner and the version in the git tag cannot disagree; tools/release.sh
-# already refuses to tag a mismatch between the last two.
-PSPSSH_VERSION := $(shell sed -n 's/^\#define PSPSSH_VERSION "\(.*\)"$$/\1/p' ../core/pspssh.h)
-
 # PARAM.SFO is not built here. tools/build-psp.sh writes it before invoking
-# make, using tools/make-sfo.py — because mksfoex does not sort the key table
-# and the format says it is ordered, and because the toolchain image has no
-# python3 to run the replacement inside. make's rule for PARAM.SFO has no
-# prerequisites, so a file already present is left alone.
+# make, with the version read out of pspssh.h, using tools/make-sfo.py — because
+# mksfoex does not sort the key table and the format says it is ordered, and
+# because the toolchain image has no python3 to run the replacement inside.
+# make's rule for PARAM.SFO has no prerequisites, so a file already present is
+# left alone.
 
 # What the XMB shows for this application, packed into the EBOOT itself rather
 # than copied to the card beside it.
