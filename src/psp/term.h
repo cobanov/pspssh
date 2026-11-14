@@ -11,7 +11,7 @@
  * ## Deliberately not the drawing layer
  *
  * Nothing here knows about the PSP. It keeps a grid of characters and colours;
- * something else paints it. That is what lets tools/test-terminal.sh drive the
+ * something else paints it. That is what lets tools/test-offline.sh drive the
  * whole parser on a laptop and assert on the result — cursor moves, erases and
  * scroll regions are exactly the kind of thing that is easy to get subtly wrong
  * and impossible to debug on a device with no console.
@@ -20,7 +20,8 @@
  *
  * The subset a shell actually emits: cursor movement and addressing, erase in
  * line and display, insert and delete lines, delete characters, colours
- * including bright and reverse, and a scroll region. Sequences outside that are
+ * including bright and reverse, and a scroll region. 256-colour and 24-bit
+ * colour are folded onto the sixteen there are. Sequences outside that are
  * consumed rather than printed, because showing them is worse than ignoring
  * them.
  *
@@ -52,7 +53,6 @@ void term_reset(int cols, int rows);
 void term_feed(const unsigned char *data, int len);
 
 int term_cols(void);
-int term_rows(void);
 int term_cursor_col(void);
 int term_cursor_row(void);
 

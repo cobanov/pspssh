@@ -195,6 +195,27 @@ int main(void)
     feed("\x1b[38;5;2mx");
     check("256-colour is folded onto the sixteen there are", fg_at(0, 0) == 2);
 
+    term_reset(20, 4);
+    feed("\x1b[38;5;196mr\x1b[38;5;21mb\x1b[38;5;240mg");
+    check("the colour cube keeps its colour and the grey ramp stays grey",
+          fg_at(0, 0) == 9 && fg_at(1, 0) == 12 && fg_at(2, 0) == 8);
+
+    /* The arguments of a 24-bit colour are not SGR codes. Read as such, the
+     * 100 here set a grey background and the 7 reversed the cell. */
+    term_reset(20, 4);
+    feed("\x1b[38;2;200;100;7mx");
+    check("24-bit colour is folded too, and its arguments are not commands",
+          fg_at(0, 0) == 9 && bg_at(0, 0) == 0);
+
+    term_reset(20, 4);
+    feed("\x1b[1;38;2;0;255;0;48;2;0;0;255mx");
+    check("a foreground and a background fit in one sequence",
+          fg_at(0, 0) == 10 && bg_at(0, 0) == 12);
+
+    term_reset(20, 4);
+    feed("\x1b[38;2;255mx");
+    check("a colour cut short changes nothing", fg_at(0, 0) == 7);
+
     /* An erase after setting a background fills with that background, which is
      * what a shell painting a status bar expects. */
     term_reset(20, 4);
@@ -236,6 +257,22 @@ int main(void)
     feed("\x1b[?25lhidden\x1b[?25h");
     check("private modes are consumed", strcmp(row_text(0), "hidden") == 0);
 
+    /* Same final byte as a command this implements, different command. These
+     * are the keyboard-mode requests newer shells and editors send. */
+    term_reset(30, 4);
+    feed("one\r\ntwo\x1b[=5u\x1b[>1u\x1b[?u\x1b[<u!");
+    check("a marked sequence is not mistaken for restore-cursor",
+          strcmp(row_text(0), "one") == 0 && strcmp(row_text(1), "two!") == 0);
+
+    term_reset(30, 4);
+    feed("\x1b[>4;1mplain");
+    check("nor for bold", fg_at(0, 0) == 7);
+
+    term_reset(30, 4);
+    feed("\x1b[2 qshape");
+    check("nor is one with an intermediate byte",
+          strcmp(row_text(0), "shape") == 0);
+
     term_reset(30, 4);
     feed("\x1b(Bplain");
     check("charset selection is consumed", strcmp(row_text(0), "plain") == 0);
@@ -263,6 +300,11 @@ int main(void)
     check("and so does one split inside its parameters",
           strcmp(row_text(0), "  x") == 0);
 
+    term_reset(20, 4);
+    feed("\x1b[;5Hx");
+    check("an empty first parameter is the default, not the second one's value",
+          strcmp(row_text(0), "    x") == 0);
+
     /* --- hostile input -------------------------------------------------------- */
     term_reset(20, 4);
     feed("\x1b[999999999999999999m""ok");
@@ -270,9 +312,14 @@ int main(void)
           strcmp(row_text(0), "ok") == 0);
 
     term_reset(20, 4);
-    feed("\x1b[1;2;3;4;5;6;7;8;9;10;11;12Hx");
-    check("more parameters than there is room for does not corrupt anything",
-          row_text(0) != NULL);
+    feed("\x1b[2;3;4;5;6;7;8;9;10;11;12;13;14;15;16;17;18;19;20Hx");
+    check("more parameters than there is room for are dropped, not run together",
+          strcmp(row_text(1), "  x") == 0);
+
+    term_reset(20, 4);
+    feed("gone\x1b[9999S\x1b[9999T\x1b[9999L\x1b[9999M\x1b[1;1Hback");
+    check("scrolling by an absurd amount empties the screen and returns",
+          strcmp(row_text(0), "back") == 0);
 
     /* Asserted on the cell rather than the cursor: after writing the last
      * column the cursor legitimately rests at `cols`, waiting to see whether a
